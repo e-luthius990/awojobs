@@ -7,6 +7,9 @@
     "development": {
       "developmentClient": true,
       "distribution": "internal",
+      "env": {
+        "NPM_CONFIG_INCLUDE": "prod"
+      },
       "android": {
         "buildType": "apk"
       }
@@ -23,8 +26,5 @@
         "buildType": "app-bundle"
       }
     }
-  },
-  "submit": {
-    "production": {}
   }
 }
