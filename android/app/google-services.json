@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "297110784812",
+    "project_id": "awojobs-ec50c",
+    "storage_bucket": "awojobs-ec50c.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:297110784812:android:86b55a75e42a91d1ec7a89",
+        "android_client_info": {
+          "package_name": "com.awojobs.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyB2xXFXLnPesEx4_SakjKAeO9jZfuJpH60"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

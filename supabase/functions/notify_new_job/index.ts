@@ -1,3 +1,5 @@
+// supabase/functions/notify_new_job/index.ts
+
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
@@ -9,133 +11,175 @@ const NORMAL_LIMIT_PER_WINDOW = 3;
 const URGENT_LIMIT_PER_WINDOW = 2;
 const GLOBAL_HOURLY_LIMIT = 10;
 
-function json(resBody: unknown, status = 200) {
-  return new Response(JSON.stringify(resBody), {
+function json(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), {
     status,
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      "Cache-Control": "no-store",
+    },
   });
+}
+
+function isValidExpoToken(token: string) {
+  return typeof token === "string" && token.startsWith("ExponentPushToken");
 }
 
 serve(async (req) => {
   try {
-    if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
+    if (req.method !== "POST") {
+      return json({ error: "method_not_allowed" }, 405);
+    }
 
-    // Require caller auth token (prevents random internet abuse)
+    /* ---------------- AUTH ---------------- */
+
     const authHeader = req.headers.get("Authorization") ?? "";
-    const bearer = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
-    if (!bearer) return json({ error: "Missing Authorization Bearer token" }, 401);
+    if (!authHeader.startsWith("Bearer ")) {
+      return json({ error: "unauthorized" }, 401);
+    }
+
+    const anon = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_ANON_KEY")!,
+      {
+        auth: { persistSession: false },
+        global: { headers: { Authorization: authHeader } },
+      }
+    );
+
+    const { data: userRes } = await anon.auth.getUser();
+    const user = userRes?.user;
+
+    if (!user) {
+      return json({ error: "invalid_session" }, 401);
+    }
+
+    const requester_id = user.id;
+
+    /* ---------------- INPUT ---------------- */
 
     const body = await req.json().catch(() => null);
-    if (!body?.location_id || !body?.title) return json({ error: "Invalid payload" }, 400);
+    if (!body?.job_id) {
+      return json({ error: "job_id_required" }, 400);
+    }
 
-    const location_id = String(body.location_id);
-    const title = String(body.title).slice(0, 140); // keep push body short
+    const job_id = String(body.job_id);
     const urgent = Boolean(body.urgent);
 
-    // Admin client (service role) for DB + sending
-    const supabaseAdmin = createClient(
+    /* ---------------- SERVICE CLIENT ---------------- */
+
+    const service = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
       { auth: { persistSession: false } }
     );
 
-    // Verify caller identity using the token provided
-    const { data: caller, error: callerErr } = await supabaseAdmin.auth.getUser(bearer);
-    if (callerErr || !caller?.user?.id) return json({ error: "Invalid token" }, 401);
-    const requester_id = caller.user.id;
+    /* ---------------- SQL AUTHORIZATION ---------------- */
 
-    /* ---------------------------------------------
-       RATE LIMIT CHECKS
-    ---------------------------------------------- */
-    const windowStart = new Date(Date.now() - WINDOW_MINUTES * 60 * 1000).toISOString();
-    const hourStart = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    const { data: authResult, error: authError } =
+      await service.rpc("authorize_job_notification", {
+        p_user_id: requester_id,
+        p_job_id: job_id,
+        p_is_urgent: urgent,
+      });
 
-    // 1) Per-location window limit (normal vs urgent)
-    const { count: recentCount, error: recentErr } = await supabaseAdmin
-      .from("push_notify_log")
-      .select("id", { count: "exact", head: true })
-      .eq("requester_id", requester_id)
-      .eq("location_id", location_id)
-      .gte("created_at", windowStart);
-
-    if (recentErr) {
-      console.error("Rate limit query error:", recentErr);
-      return json({ error: "Rate limit check failed" }, 500);
+    if (authError) {
+      console.error("[notify_new_job RPC]", authError);
+      return json({ error: "database_error" }, 500);
     }
 
-    const limit = urgent ? URGENT_LIMIT_PER_WINDOW : NORMAL_LIMIT_PER_WINDOW;
-    if ((recentCount ?? 0) >= limit) {
+    if (!authResult?.ok) {
       return json(
-        { error: "Rate limited", retry_after_minutes: WINDOW_MINUTES },
-        429
+        { error: authResult?.error ?? "authorization_failed" },
+        403
       );
     }
 
-    // 2) Global hourly cap
-    const { count: hourlyCount, error: hourlyErr } = await supabaseAdmin
+    const location_id = authResult.location_id;
+    const jobTitle = authResult.title;
+
+    /* ---------------- RATE LIMIT ---------------- */
+
+    const now = Date.now();
+    const windowStart = new Date(
+      now - WINDOW_MINUTES * 60_000
+    ).toISOString();
+    const hourStart = new Date(
+      now - 60 * 60_000
+    ).toISOString();
+
+    const limit = urgent
+      ? URGENT_LIMIT_PER_WINDOW
+      : NORMAL_LIMIT_PER_WINDOW;
+
+    const { count: windowCount } = await service
+      .from("push_notify_log")
+      .select("id", { count: "exact", head: true })
+      .eq("requester_id", requester_id)
+      .eq("job_id", job_id)
+      .gte("created_at", windowStart);
+
+    if ((windowCount ?? 0) >= limit) {
+      return json({ error: "rate_limited" }, 429);
+    }
+
+    const { count: hourlyCount } = await service
       .from("push_notify_log")
       .select("id", { count: "exact", head: true })
       .eq("requester_id", requester_id)
       .gte("created_at", hourStart);
 
-    if (hourlyErr) {
-      console.error("Hourly cap query error:", hourlyErr);
-      return json({ error: "Rate limit check failed" }, 500);
-    }
-
     if ((hourlyCount ?? 0) >= GLOBAL_HOURLY_LIMIT) {
-      return json(
-        { error: "Hourly rate limited", retry_after_minutes: 60 },
-        429
-      );
+      return json({ error: "hourly_rate_limit" }, 429);
     }
 
-    /* ---------------------------------------------
-       RECIPIENTS (UNSUBSCRIBE LOGIC)
-       Only:
-         - same location
-         - token exists
-         - push_opt_in = true
-    ---------------------------------------------- */
-    const { data: profiles, error: profErr } = await supabaseAdmin
-      .from("profiles")
+    /* ---------------- LOAD DEVICES ---------------- */
+
+    const { data: devices } = await service
+      .from("device_push_tokens")
       .select("expo_push_token")
-      .eq("resolved_location_id", location_id)
+      .eq("location_id", location_id)
       .eq("push_opt_in", true)
       .not("expo_push_token", "is", null);
 
-    if (profErr) {
-      console.error("Profiles query error:", profErr);
-      return json({ error: "Database error" }, 500);
-    }
+    const tokens = [
+      ...new Set(
+        (devices ?? [])
+          .map((d) => d.expo_push_token)
+          .filter(isValidExpoToken)
+      ),
+    ];
 
-    // Log the attempt (counts toward rate limit even if no recipients)
-    await supabaseAdmin.from("push_notify_log").insert({
+    /* ---------------- LOG ATTEMPT ---------------- */
+
+    await service.from("push_notify_log").insert({
       requester_id,
+      job_id,
       location_id,
       is_urgent: urgent,
+      recipients: tokens.length,
     });
 
-    if (!profiles || profiles.length === 0) {
+    if (tokens.length === 0) {
       return json({ ok: true, recipients: 0 });
     }
 
-    /* ---------------------------------------------
-       BUILD PUSH MESSAGES (URGENT PRIORITY)
-    ---------------------------------------------- */
-    const pushTitle = urgent ? "URGENT: Job near you" : "New job near you";
+    /* ---------------- BUILD PUSH ---------------- */
 
-    const messages = profiles.map((p) => ({
-      to: p.expo_push_token,
+    const title = urgent
+      ? "URGENT: Job near you"
+      : "New job near you";
+
+    const messages = tokens.map((to) => ({
+      to,
       sound: "default",
-      title: pushTitle,
-      body: title,
+      title,
+      body: jobTitle.slice(0, 140),
       priority: urgent ? "high" : "default",
     }));
 
-    /* ---------------------------------------------
-       SEND IN BATCHES
-    ---------------------------------------------- */
+    /* ---------------- SEND PUSH ---------------- */
+
     let sent = 0;
 
     for (let i = 0; i < messages.length; i += EXPO_BATCH_SIZE) {
@@ -147,17 +191,25 @@ serve(async (req) => {
         body: JSON.stringify(batch),
       });
 
-      if (!res.ok) {
-        const text = await res.text();
-        console.error("Expo push error:", text);
-      } else {
-        sent += batch.length;
+      if (!res.ok) continue;
+
+      const result = await res.json();
+
+      if (Array.isArray(result.data)) {
+        sent += result.data.filter(
+          (r: any) => r.status === "ok"
+        ).length;
       }
     }
 
-    return json({ ok: true, recipients: sent, urgent });
+    return json({
+      ok: true,
+      recipients: sent,
+      urgent,
+    });
+
   } catch (err) {
-    console.error("Unhandled error:", err);
-    return json({ error: "Internal error" }, 500);
+    console.error("[notify_new_job]", err);
+    return json({ error: "internal_error" }, 500);
   }
 });

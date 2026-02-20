@@ -1,31 +1,43 @@
+// src/navigation/AuthNavigator.tsx
+
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
+import { useMemo } from "react";
 
-import WelcomeScreen from "../screens/auth/WelcomeScreen";
-import OTPScreen from "../screens/auth/OTPScreen";
-import PinLoginScreen from "../screens/auth/PinLoginScreen";
-import CreatePinScreen from "../screens/auth/CreatePinScreen";
+import LoginScreen from "../screens/auth/LoginScreen";
+import RegisterScreen from "../screens/auth/RegisterScreen";
+import ForgotPasswordScreen from "../screens/auth/ForgotPasswordScreen";
+import ResetCodeScreen from "../screens/auth/ResetCodeScreen";
 
-const Stack = createNativeStackNavigator();
+export type AuthStackParamList = {
+  Login: undefined;
+  Register: { role?: "employer" | "job_seeker" } | undefined;
+  ForgotPassword: undefined;
+  ResetCode: { phone: string };
+};
+
+const Stack = createNativeStackNavigator<AuthStackParamList>();
 
 export function AuthNavigator() {
+  const screenOptions = useMemo(
+    () => ({
+      headerShown: false,
+      animation: "slide_from_right",
+      animationDuration: 200,
+      gestureEnabled: true,
+    }),
+    [],
+  );
+
   return (
     <Stack.Navigator
-      screenOptions={{
-        headerShown: false,
-        animation: "fade", // low-end friendly
-      }}
+      initialRouteName="Login"
+      screenOptions={screenOptions}
+      detachInactiveScreens
     >
-      {/* Entry point for employers */}
-      <Stack.Screen name="Welcome" component={WelcomeScreen} />
-
-      {/* Returning employer with PIN */}
-      <Stack.Screen name="PinLogin" component={PinLoginScreen} />
-
-      {/* OTP verification (first time / fallback) */}
-      <Stack.Screen name="OTP" component={OTPScreen} />
-
-      {/* First-time PIN creation */}
-      <Stack.Screen name="CreatePin" component={CreatePinScreen} />
+      <Stack.Screen name="Login" component={LoginScreen} />
+      <Stack.Screen name="Register" component={RegisterScreen} />
+      <Stack.Screen name="ForgotPassword" component={ForgotPasswordScreen} />
+      <Stack.Screen name="ResetCode" component={ResetCodeScreen} />
     </Stack.Navigator>
   );
 }

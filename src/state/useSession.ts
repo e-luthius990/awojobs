@@ -1,58 +1,71 @@
 import { useEffect, useState } from "react";
 import { supabase } from "../core/supabase";
-import { Session } from "@supabase/supabase-js";
-import { ENV } from "../core/config";
+import type { Session } from "@supabase/supabase-js";
+
+/* =====================================================
+   GLOBAL SINGLETON AUTH STATE
+===================================================== */
+
+let cachedSession: Session | null = null;
+let initialized = false;
+let initializingPromise: Promise<void> | null = null;
+let subscribers: ((session: Session | null) => void)[] = [];
+
+/* =====================================================
+   INTERNAL INIT (SAFE SINGLETON)
+===================================================== */
+
+async function initAuth() {
+  if (initialized) return;
+
+  if (!initializingPromise) {
+    initializingPromise = (async () => {
+      const { data } = await supabase.auth.getSession();
+      cachedSession = data.session ?? null;
+
+      supabase.auth.onAuthStateChange((_event, session) => {
+        cachedSession = session ?? null;
+        subscribers.forEach((cb) => cb(cachedSession));
+      });
+
+      initialized = true;
+    })();
+  }
+
+  return initializingPromise;
+}
+
+/* =====================================================
+   HOOK
+===================================================== */
 
 export function useSession() {
-  const [session, setSession] = useState<Session | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [session, setSession] = useState<Session | null>(cachedSession);
+  const [loading, setLoading] = useState(!initialized);
 
   useEffect(() => {
-    let mounted = true;
+    let active = true;
 
-    async function init() {
-      try {
-        // 🔑 DEV MODE: bypass auth entirely
-        if (ENV.DEV_AUTH_BYPASS) {
-          if (mounted) {
-            setSession({} as Session); // mock non-null session
-            setLoading(false);
-          }
-          return;
-        }
+    initAuth().then(() => {
+      if (!active) return;
 
-        const { data, error } = await supabase.auth.getSession();
+      setSession(cachedSession);
+      setLoading(false);
 
-        if (!mounted) return;
+      const handler = (s: Session | null) => {
+        if (!active) return;
+        setSession(s);
+      };
 
-        if (error) {
-          console.warn("getSession error:", error.message);
-          setSession(null);
-        } else {
-          setSession(data.session);
-        }
-      } catch (err) {
-        console.warn("Session init failed:", err);
-        if (mounted) setSession(null);
-      } finally {
-        if (mounted) setLoading(false);
-      }
-    }
+      subscribers.push(handler);
 
-    init();
-
-    // 🔕 Do NOT listen to auth changes in dev mode
-    if (ENV.DEV_AUTH_BYPASS) return;
-
-    const { data: listener } = supabase.auth.onAuthStateChange(
-      (_event, session) => {
-        if (mounted) setSession(session);
-      }
-    );
+      return () => {
+        subscribers = subscribers.filter((h) => h !== handler);
+      };
+    });
 
     return () => {
-      mounted = false;
-      listener.subscription.unsubscribe();
+      active = false;
     };
   }, []);
 

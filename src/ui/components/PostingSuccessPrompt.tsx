@@ -1,10 +1,10 @@
 import React from "react";
-import { View, Text, Pressable, Share } from "react-native";
+import { View, Text, Pressable, Share, Alert } from "react-native";
 import { Job } from "../../jobs/jobs.types";
+import { normalizeUgPhone } from "@utils/normalizeUgPhone";
 
-/* ======================================================
-   POST SUCCESS → SHARE PROMPT
-====================================================== */
+const APP_URL = "https://awojobs.app";
+
 export function PostingSuccessPrompt({
   job,
   onDone,
@@ -17,10 +17,12 @@ export function PostingSuccessPrompt({
       await Share.share({
         message: buildShareText(job),
       });
-    } finally {
-      onDone();
+    } catch {
+      Alert.alert("Could not share", "Please try again.");
     }
   }
+
+  const expired = new Date(job.expires_at).getTime() < Date.now();
 
   return (
     <View
@@ -40,65 +42,20 @@ export function PostingSuccessPrompt({
           borderColor: "#E5E7EB",
         }}
       >
-        {/* TITLE */}
-        <Text
-          style={{
-            fontSize: 20,
-            fontWeight: "800",
-            color: "#0F172A",
-            marginBottom: 8,
-            textAlign: "center",
-          }}
-        >
-          Job posted successfully 🎉
+        <Text style={title}>Job posted successfully 🎉</Text>
+
+        <Text style={message}>
+          Share this job to reach more candidates in your area.
         </Text>
 
-        {/* MESSAGE */}
-        <Text
-          style={{
-            fontSize: 14,
-            lineHeight: 20,
-            color: "#475569",
-            textAlign: "center",
-            marginBottom: 24,
-          }}
-        >
-          Want to get responses faster? Share this job with people around you.
-        </Text>
+        {!expired && (
+          <Pressable onPress={shareJob} style={primaryBtn}>
+            <Text style={primaryText}>Share job</Text>
+          </Pressable>
+        )}
 
-        {/* PRIMARY ACTION */}
-        <Pressable
-          onPress={shareJob}
-          style={{
-            backgroundColor: "#0F172A",
-            paddingVertical: 14,
-            borderRadius: 999,
-            marginBottom: 12,
-          }}
-        >
-          <Text
-            style={{
-              color: "white",
-              textAlign: "center",
-              fontWeight: "800",
-              fontSize: 15,
-            }}
-          >
-            Share job
-          </Text>
-        </Pressable>
-
-        {/* SECONDARY */}
         <Pressable onPress={onDone}>
-          <Text
-            style={{
-              textAlign: "center",
-              fontSize: 13,
-              color: "#64748B",
-            }}
-          >
-            I’ll do this later
-          </Text>
+          <Text style={secondary}>Done</Text>
         </Pressable>
       </View>
     </View>
@@ -106,22 +63,33 @@ export function PostingSuccessPrompt({
 }
 
 /* ---------------------------------------------
-   SHARE TEXT (UGANDA-FRIENDLY)
+   SHARE TEXT (UGANDA-LOCKED)
 ---------------------------------------------- */
 function buildShareText(job: Job) {
   const expiresAt = new Date(job.expires_at).toLocaleDateString();
 
-  const contactLine =
-    job.contact_method === "walk_in"
-      ? "Apply: Walk-in"
-      : `Contact: ${job.contact_phone}`;
+  let contact = "Apply via AwoJobs app";
+
+  if (job.contact_method === "walk_in") {
+    contact = "Apply: Walk in";
+  }
+
+  if (job.contact_phone) {
+    const normalized = normalizeUgPhone(job.contact_phone);
+
+    const validUg = /^\+2567\d{8}$/.test(normalized);
+
+    if (validUg) {
+      contact = `Contact: ${normalized}`;
+    }
+  }
 
   return (
-    `Job opportunity\n\n` +
+    `JOB AVAILABLE 🔔\n\n` +
     `${job.title}\n` +
     `Pay: ${job.pay_type}\n` +
-    `${contactLine}\n` +
+    `${contact}\n` +
     `Expires: ${expiresAt}\n\n` +
-    `Posted on AwoJobs`
+    `View job:\n${APP_URL}/job/${job.id}`
   );
 }

@@ -1,50 +1,77 @@
-import React from "react";
-import { Pressable, Text, View, StyleSheet } from "react-native";
+import React, { useEffect, useRef } from "react";
+import { Text, StyleSheet, Pressable, Animated } from "react-native";
 
-export function NewJobsBanner({
-  count,
-  onPress,
-}: {
+type Props = {
   count: number;
+  visible: boolean;
   onPress(): void;
-}) {
-  if (count === 0) return null;
+};
+
+export function NewJobsBanner({ count, visible, onPress }: Props) {
+  const opacity = useRef(new Animated.Value(0)).current;
+  const translateY = useRef(new Animated.Value(-10)).current;
+
+  useEffect(() => {
+    if (!visible || count === 0) return;
+
+    Animated.parallel([
+      Animated.timing(opacity, {
+        toValue: 1,
+        duration: 220,
+        useNativeDriver: true,
+      }),
+      Animated.timing(translateY, {
+        toValue: 0,
+        duration: 220,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [visible, count]);
+
+  if (!visible || count === 0) return null;
 
   return (
-    <View style={styles.wrapper} pointerEvents="box-none">
-      <Pressable onPress={onPress} style={styles.banner}>
+    <Animated.View
+      style={[
+        styles.wrapper,
+        {
+          opacity,
+          transform: [{ translateY }],
+        },
+      ]}
+    >
+      <Pressable
+        onPress={onPress}
+        accessibilityRole="button"
+        accessibilityLabel={`${count} new job${count > 1 ? "s" : ""} available`}
+        style={({ pressed }) => [styles.banner, pressed && styles.pressed]}
+      >
         <Text style={styles.text}>
-          {count} new job{count > 1 ? "s" : ""} available
+          {count} new job
+          {count > 1 ? "s" : ""} available
         </Text>
       </Pressable>
-    </View>
+    </Animated.View>
   );
 }
 
 const styles = StyleSheet.create({
   wrapper: {
-    position: "absolute",
-    top: 14,
-    left: 0,
-    right: 0,
     alignItems: "center",
-    zIndex: 30,
+    marginVertical: 8,
   },
-
   banner: {
-    backgroundColor: "#FFFFFF",
-    paddingHorizontal: 18,
+    backgroundColor: "#0F172A",
     paddingVertical: 10,
+    paddingHorizontal: 18,
     borderRadius: 999,
-    shadowColor: "#000",
-    shadowOpacity: 0.12,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 6 },
   },
-
+  pressed: {
+    opacity: 0.85,
+  },
   text: {
+    color: "#fff",
+    fontWeight: "800",
     fontSize: 13,
-    fontWeight: "700",
-    color: "#0F172A",
   },
 });

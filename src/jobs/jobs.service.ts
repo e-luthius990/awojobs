@@ -1,47 +1,62 @@
-import { supabase } from "../core/supabase";
-import { Job } from "./jobs.types";
+import { supabaseAnon } from "../core/supabaseAnon";
+import { ENV } from "../env";
+import { JobWithCoords } from "./jobs.types";
 import { JobsCursor } from "./jobs.cursor";
 
 export type JobsPage = {
-  jobs: Job[];
+  jobs: JobWithCoords[];
   nextCursor: JobsCursor | null;
 };
 
-export async function fetchJobsForLocationCursor(
+export async function fetchFeedCursor(
   locationId: string,
   cursor?: JobsCursor | null,
-  limit = 20
+  limit = 20,
 ): Promise<JobsPage> {
-  let query = supabase
-    .from("jobs")
-    .select("*")
-    .eq("location_id", locationId)
-    .gt("expires_at", new Date().toISOString())
-    .order("created_at", { ascending: false })
-    .order("id", { ascending: false })
-    .limit(limit + 1); // fetch extra to detect next page
+  const session = await supabaseAnon.auth.getSession();
+  const token = session.data.session?.access_token;
 
-  if (cursor) {
-    query = query.or(
-      `created_at.lt.${cursor.created_at},and(created_at.eq.${cursor.created_at},id.lt.${cursor.id})`
-    );
+  const res = await fetch(
+    `${ENV.SUPABASE_URL}/functions/v1/feed`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({
+        location_id: locationId,
+        limit,
+        cursor_created_at: cursor?.created_at ?? null,
+        cursor_id: cursor?.id ?? null,
+      }),
+    }
+  );
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text);
   }
 
-  const { data, error } = await query;
+  const data = await res.json();
 
-  if (error) throw error;
-  if (!data || data.length === 0) {
-    return { jobs: [], nextCursor: null };
-  }
+  const jobs: JobWithCoords[] = (data.jobs ?? []).map((row: any) => ({
+    id: row.id,
+    title: row.title,
+    description: row.description,
+    pay_type: row.pay_type,
+    location_id: row.location_id,
+    contact_method: row.contact_method,
+    created_at: row.created_at,
+    lat: null,
+    lng: null,
+  }));
 
-  const hasMore = data.length > limit;
-  const rows = hasMore ? data.slice(0, limit) : data;
-
-  const last = rows[rows.length - 1];
+  const last = jobs[jobs.length - 1];
 
   return {
-    jobs: rows as Job[],
-    nextCursor: hasMore
+    jobs,
+    nextCursor: last
       ? { created_at: last.created_at, id: last.id }
       : null,
   };

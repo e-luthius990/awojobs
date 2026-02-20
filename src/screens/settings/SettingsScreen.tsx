@@ -1,391 +1,294 @@
 import React, { useEffect, useState } from "react";
-import {
-  View,
-  Text,
-  Pressable,
-  Alert,
-  Switch,
-  Platform,
-  ToastAndroid,
-} from "react-native";
+import { View, Text, Pressable, Alert, ActivityIndicator } from "react-native";
 import * as Haptics from "expo-haptics";
-import * as Clipboard from "expo-clipboard";
 import Constants from "expo-constants";
 
-import { useProfile } from "../../state/useProfile";
+import { supabase } from "../../core/supabase";
+import { useSession } from "../../state/useSession";
 import { signOut, deleteAccount } from "../../auth/auth.service";
 import { openWhatsAppSupport } from "../../support/whatsapp";
-import { setPushOptIn } from "../../notifications/push.prefs";
 import { getCachedLocation } from "../../location/location.cache";
-import { ResolvedLocation } from "../../location/location.types";
 
 export default function SettingsScreen({ navigation }: any) {
-  const { profile, loading } = useProfile();
-  const isAuthenticated = !!profile;
+  const { session } = useSession();
 
-  const [location, setLocation] = useState<ResolvedLocation | null>(null);
-  const [notificationsOn, setNotificationsOn] = useState(true);
+  const [loading, setLoading] = useState(true);
+  const [settings, setSettings] = useState<any | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [location, setLocation] = useState<any>(null);
 
+  /* =====================================================
+     LOAD SETTINGS (SAFE)
+  ====================================================== */
+  useEffect(() => {
+    let mounted = true;
+
+    async function load() {
+      if (!session) {
+        if (mounted) {
+          setLoading(false);
+        }
+        return;
+      }
+
+      const { data, error } = await supabase.rpc("get_settings");
+
+      if (!mounted) return;
+
+      if (error) {
+        console.log("Settings RPC error:", error.message);
+        setError("Could not load settings.");
+        setLoading(false);
+        return;
+      }
+
+      if (!data) {
+        setError("Profile not found.");
+        setLoading(false);
+        return;
+      }
+
+      setSettings(data);
+      setLoading(false);
+    }
+
+    load();
+
+    return () => {
+      mounted = false;
+    };
+  }, [session]);
+
+  /* =====================================================
+     LOAD LOCATION CACHE
+  ====================================================== */
   useEffect(() => {
     getCachedLocation().then(setLocation);
   }, []);
 
+  /* =====================================================
+     SAFE RENDER (AFTER ALL HOOKS)
+  ====================================================== */
+
+  if (!session) {
+    return null;
+  }
+
   if (loading) {
     return (
       <View style={center}>
-        <Text style={{ opacity: 0.6 }}>Loading settings…</Text>
+        <ActivityIndicator />
       </View>
     );
   }
 
+  if (error || !settings) {
+    return (
+      <View style={center}>
+        <Text style={{ opacity: 0.6 }}>
+          {error ?? "Unable to load settings."}
+        </Text>
+      </View>
+    );
+  }
+
+  const profile = settings.profile;
+  const premium = settings.premium;
+
   /* =====================================================
      ACTIONS
   ====================================================== */
+
   async function logout() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-
-    Alert.alert("Log out?", "You’ll need a code to sign in again.", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Log out",
-        style: "destructive",
-        onPress: async () => {
-          await signOut();
-        },
-      },
-    ]);
+    await signOut();
   }
 
-  function confirmDeleteAccount() {
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-
+  async function confirmDeleteAccount() {
     Alert.alert(
       "Delete account",
-      "This will permanently remove your account, jobs, and all data. This cannot be undone.",
+      "This will permanently remove your account.",
       [
         { text: "Cancel", style: "cancel" },
         {
           text: "Delete permanently",
           style: "destructive",
           onPress: async () => {
-            try {
-              await deleteAccount();
-              Alert.alert("Account deleted", "Your account has been removed.");
-            } catch (e: any) {
-              Alert.alert(
-                "Deletion failed",
-                e?.message ?? "Could not delete account.",
-              );
-            }
+            await deleteAccount();
           },
         },
       ],
     );
   }
 
-  /* =====================================================
-     APP INFO (VERSION / BUILD)
-  ====================================================== */
-  const version =
-    Constants.expoConfig?.version ?? Constants.manifest?.version ?? "1.0.0";
+  const version = Constants.expoConfig?.version ?? "1.0.0";
+  const appInfoText = `AwoJobs v${version}`;
 
-  const build =
-    Platform.OS === "android"
-      ? Constants.expoConfig?.android?.versionCode
-      : Constants.expoConfig?.ios?.buildNumber;
-
-  const appInfoText = `AwoJobs v${version}${
-    build ? ` (build ${build})` : ""
-  } • ${Platform.OS === "android" ? "Android" : "iOS"}`;
-
-  function showCopiedToast() {
-    if (Platform.OS === "android") {
-      ToastAndroid.show("App info copied", ToastAndroid.SHORT);
-    } else {
-      Alert.alert("Copied", "App info copied to clipboard.");
-    }
-  }
-
-  /* =====================================================
-     UI
-  ====================================================== */
   return (
     <View style={{ flex: 1, backgroundColor: "#F8F9FB" }}>
       <View style={{ padding: 20 }}>
-        {/* HEADER */}
-        <Text
-          style={{
-            fontSize: 20,
-            fontWeight: "800",
-            color: "#0F172A",
-            marginBottom: 20,
-          }}
-        >
-          Settings
-        </Text>
+        <Text style={header}>Settings</Text>
+
+        {/* ACCOUNT */}
+        <Section title="Account">
+          <InfoRow label="Your Phone" value={profile.phone} />
+          <InfoRow label="Role" value={profile.role} />
+        </Section>
+
+        <Spacer size={20} />
+
+        {/* PROFILE */}
+        <Section title="Profile">
+          <InfoRow label="Name" value={profile.full_name || "Not set"} />
+          <InfoRow label="District" value={profile.district || "Not set"} />
+        </Section>
+
+        <Spacer size={20} />
+
+        {/* PREMIUM */}
+        {profile.role === "job_seeker" && (
+          <>
+            <Section title="Premium Status">
+              {premium?.active ? (
+                <Text style={primaryText}>
+                  Active • {premium.days_remaining} days remaining
+                </Text>
+              ) : (
+                <Text style={secondaryText}>Not active</Text>
+              )}
+            </Section>
+            <Spacer size={20} />
+          </>
+        )}
+
+        {/* EMPLOYER */}
+        {profile.role === "employer" && (
+          <>
+            <Section title="Business">
+              <InfoRow
+                label="Business Name"
+                value={profile.business_name || "Not set"}
+              />
+            </Section>
+            <Spacer size={20} />
+          </>
+        )}
 
         {/* LOCATION */}
-        <Section title="Location">
-          {location ? (
-            <>
-              <Text style={primaryText}>
-                {location.sub_county}, {location.town}
-              </Text>
-
-              <Text style={secondaryText}>{location.district}</Text>
-
-              <Text style={metaText}>
-                {location.source === "manual" ? "Set manually" : "Using GPS"}
-              </Text>
-
-              <Spacer size={14} />
-
-              <InlineAction
-                label="Change location"
-                hint="Choose a different area"
-                onPress={() => navigation.navigate("ManualLocation")}
-              />
-            </>
-          ) : (
-            <InlineAction
-              label="Set location"
-              hint="Choose your area"
-              onPress={() => navigation.navigate("ManualLocation")}
-            />
-          )}
-        </Section>
-
-        <Spacer size={20} />
-
-        {/* NOTIFICATIONS */}
-        <Section title="Notifications">
-          <View
-            style={{
-              flexDirection: "row",
-              justifyContent: "space-between",
-              alignItems: "center",
-            }}
-          >
-            <View style={{ flex: 1, paddingRight: 12 }}>
-              <Text style={{ fontWeight: "700", color: "#0F172A" }}>
-                Job alerts
-              </Text>
-              <Text style={secondaryText}>
-                Get notified when new jobs appear nearby
-              </Text>
-            </View>
-
-            <Switch
-              value={notificationsOn}
-              onValueChange={async (value) => {
-                setNotificationsOn(value);
-
-                Haptics.impactAsync(
-                  value
-                    ? Haptics.ImpactFeedbackStyle.Light
-                    : Haptics.ImpactFeedbackStyle.Soft,
-                );
-
-                await setPushOptIn(value);
-              }}
-              trackColor={{ false: "#E5E7EB", true: "#0F172A" }}
-              thumbColor="#FFFFFF"
-            />
-          </View>
-        </Section>
-
-        <Spacer size={20} />
+        {location && (
+          <>
+            <Section title="Location">
+              <Text style={primaryText}>{location.district}</Text>
+            </Section>
+            <Spacer size={20} />
+          </>
+        )}
 
         {/* SUPPORT */}
         <Section title="Support">
           <Pressable
-            onPress={() => {
-              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-              openWhatsAppSupport(profile);
-            }}
-            style={{
-              backgroundColor: "#25D366",
-              paddingVertical: 14,
-              borderRadius: 14,
-              alignItems: "center",
-            }}
+            onPress={() => openWhatsAppSupport(profile)}
+            style={whatsappBtn}
           >
-            <Text
-              style={{
-                color: "white",
-                fontWeight: "800",
-                fontSize: 14,
-              }}
-            >
-              Chat with us on WhatsApp
-            </Text>
+            <Text style={whatsappText}>Chat with us on WhatsApp</Text>
           </Pressable>
         </Section>
 
-        <Spacer size={20} />
+        <Spacer size={30} />
 
-        {/* ABOUT */}
-        <Section title="About">
-          <Text style={secondaryText}>
-            AwoJobs helps you find work opportunities near you. Jobs are posted
-            by people and businesses in your area.
-          </Text>
-        </Section>
-
-        <Spacer size={20} />
-
-        {/* APP INFO */}
-        <Section title="App info">
-          <Pressable
-            onLongPress={async () => {
-              await Clipboard.setStringAsync(appInfoText);
-              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-              showCopiedToast();
-            }}
-            delayLongPress={300}
-          >
-            <Text
-              style={{
-                fontSize: 12,
-                color: "#94A3B8",
-                lineHeight: 18,
-              }}
-            >
-              {appInfoText}
+        {/* ACCOUNT ACTIONS */}
+        <Section title="Account Actions">
+          <Pressable onPress={confirmDeleteAccount}>
+            <Text style={{ color: "#B91C1C", fontWeight: "700" }}>
+              Delete account
             </Text>
+          </Pressable>
+
+          <Spacer size={14} />
+
+          <Pressable onPress={logout}>
+            <Text style={{ fontWeight: "700" }}>Log out</Text>
           </Pressable>
         </Section>
 
-        {isAuthenticated && (
-          <>
-            <Spacer size={28} />
+        <Spacer size={30} />
 
-            {/* ACCOUNT */}
-            <Section title="Account">
-              <Pressable onPress={confirmDeleteAccount}>
-                <Text
-                  style={{
-                    color: "#B91C1C",
-                    fontWeight: "700",
-                  }}
-                >
-                  Delete account permanently
-                </Text>
-              </Pressable>
-            </Section>
-
-            <Spacer size={20} />
-
-            {/* LOGOUT */}
-            <Pressable
-              onPress={logout}
-              style={{
-                paddingVertical: 14,
-                borderRadius: 14,
-                borderWidth: 1,
-                borderColor: "#E5E7EB",
-                backgroundColor: "#FFFFFF",
-              }}
-            >
-              <Text
-                style={{
-                  textAlign: "center",
-                  fontWeight: "700",
-                  color: "#B91C1C",
-                }}
-              >
-                Log out
-              </Text>
-            </Pressable>
-          </>
-        )}
+        <Text style={metaText}>{appInfoText}</Text>
       </View>
     </View>
   );
 }
 
-/* =====================================================
-   UI HELPERS
-===================================================== */
+/* ================= UI HELPERS ================= */
 
-function Section({
-  title,
-  children,
-}: {
-  title: string;
-  children: React.ReactNode;
-}) {
+function Section({ title, children }: any) {
   return (
-    <View
-      style={{
-        backgroundColor: "#FFFFFF",
-        borderRadius: 18,
-        padding: 16,
-        borderWidth: 1,
-        borderColor: "#E5E7EB",
-      }}
-    >
-      <Text
-        style={{
-          fontSize: 14,
-          fontWeight: "800",
-          color: "#0F172A",
-          marginBottom: 10,
-        }}
-      >
-        {title}
-      </Text>
+    <View style={section}>
+      <Text style={sectionTitle}>{title}</Text>
       {children}
     </View>
   );
 }
 
-function InlineAction({
-  label,
-  hint,
-  onPress,
-}: {
-  label: string;
-  hint?: string;
-  onPress(): void;
-}) {
+function InfoRow({ label, value }: any) {
   return (
-    <Pressable onPress={onPress} style={{ paddingVertical: 10 }}>
-      <Text style={{ fontWeight: "700", color: "#0F172A" }}>{label}</Text>
-      {hint && <Text style={secondaryText}>{hint}</Text>}
-    </Pressable>
+    <View style={{ marginBottom: 8 }}>
+      <Text style={{ fontSize: 12, color: "#64748B" }}>{label}</Text>
+      <Text style={{ fontWeight: "700" }}>{value}</Text>
+    </View>
   );
 }
 
-function Spacer({ size = 12 }: { size?: number }) {
+function Spacer({ size = 16 }: any) {
   return <View style={{ height: size }} />;
 }
 
-/* =====================================================
-   TEXT STYLES
-===================================================== */
+/* ================= STYLES ================= */
+
+const header = {
+  fontSize: 20,
+  fontWeight: "800",
+  marginBottom: 20,
+};
 
 const center = {
   flex: 1,
   justifyContent: "center",
   alignItems: "center",
-  padding: 24,
 };
 
 const primaryText = {
-  fontSize: 14,
   fontWeight: "700",
-  color: "#0F172A",
 };
 
 const secondaryText = {
-  fontSize: 13,
   color: "#64748B",
-  marginTop: 2,
 };
 
 const metaText = {
   fontSize: 12,
   color: "#94A3B8",
-  marginTop: 4,
+};
+
+const section = {
+  backgroundColor: "#FFF",
+  borderRadius: 14,
+  padding: 16,
+};
+
+const sectionTitle = {
+  fontWeight: "800",
+  marginBottom: 12,
+};
+
+const whatsappBtn = {
+  backgroundColor: "#25D366",
+  paddingVertical: 14,
+  borderRadius: 12,
+  alignItems: "center",
+};
+
+const whatsappText = {
+  color: "white",
+  fontWeight: "800",
 };

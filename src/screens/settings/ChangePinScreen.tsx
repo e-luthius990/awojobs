@@ -1,40 +1,52 @@
 import React, { useState } from "react";
 import { View, Text, Pressable, Alert } from "react-native";
 import * as Haptics from "expo-haptics";
-import { supabase } from "../../core/supabase";
+
+import { useSession } from "../../state/useSession";
+import { setPendingIntent } from "../../intent/intent.store";
 
 export default function ChangePinScreen({ navigation }: any) {
+  const { session } = useSession();
   const [loading, setLoading] = useState(false);
 
-  async function resetPin() {
+  async function startPinChange() {
     if (loading) return;
+    setLoading(true);
 
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+
+    const resumePinChange = async () => {
+      // After OTP success, user continues PIN flow
+      navigation.navigate("CreatePin");
+    };
 
     Alert.alert(
       "Change PIN",
       "For your security, you’ll need to verify your phone number again before setting a new PIN.",
       [
-        { text: "Cancel", style: "cancel" },
+        {
+          text: "Cancel",
+          style: "cancel",
+          onPress: () => setLoading(false),
+        },
         {
           text: "Continue",
           style: "destructive",
           onPress: async () => {
-            try {
-              setLoading(true);
+            await Haptics.notificationAsync(
+              Haptics.NotificationFeedbackType.Success,
+            );
 
-              // Success haptic before exit
-              Haptics.notificationAsync(
-                Haptics.NotificationFeedbackType.Success,
-              );
+            // 🔐 Intent-based verification
+            setPendingIntent({
+              type: "CHANGE_PIN",
+              resume: resumePinChange,
+            });
 
-              // Sign out → OTP flow will start automatically
-              await supabase.auth.signOut();
-            } catch {
-              Alert.alert("Something went wrong", "Please try again.");
-            } finally {
-              setLoading(false);
-            }
+            // If already authenticated, OTP still enforces step-up
+            navigation.navigate("AuthModal");
+
+            setLoading(false);
           },
         },
       ],
@@ -55,7 +67,7 @@ export default function ChangePinScreen({ navigation }: any) {
 
       {/* ACTION */}
       <Pressable
-        onPress={resetPin}
+        onPress={startPinChange}
         disabled={loading}
         style={{
           backgroundColor: "#111",

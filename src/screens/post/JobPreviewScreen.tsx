@@ -1,48 +1,63 @@
-import React, { useRef, useState } from "react";
-import { View, Text, Pressable, Alert } from "react-native";
+import React from "react";
+import { View, Text, Pressable } from "react-native";
+
+type ContactMethod = "call" | "whatsapp" | "walk_in" | "in_app";
+type PayType = "daily" | "weekly" | "monthly";
 
 export default function JobPreviewScreen({ route, navigation }: any) {
-  const { job, onConfirm, isEdit } = route.params as {
+  const { job, mode, jobId } = route.params as {
     job: {
       title: string;
-      pay_type: "daily" | "weekly" | "monthly";
-      contact_method: "call" | "whatsapp" | "walk_in";
-      contact_phone: string;
+      description?: string | null;
+      pay_type: PayType;
+      contact_method: ContactMethod;
+      contact_phone?: string | null;
       expires_at: string;
+      location_id: string;
       locationName?: string;
     };
-    onConfirm(): Promise<void>;
-    isEdit: boolean;
+    mode: "create" | "edit" | "renew";
+    jobId?: string;
   };
 
-  const [posting, setPosting] = useState(false);
-  const lockedRef = useRef(false);
+  const isEdit = mode === "edit";
+  const isRenew = mode === "renew";
 
   /* ======================================================
-     CONFIRM (DELEGATES TO POST JOB SCREEN)
+     ACTION LABEL
   ====================================================== */
-  async function confirm() {
-    if (lockedRef.current) return;
-
-    lockedRef.current = true;
-    setPosting(true);
-
-    try {
-      await onConfirm();
-    } catch (e: any) {
-      lockedRef.current = false;
-      Alert.alert("Failed", e?.message ?? "Try again.");
-    } finally {
-      setPosting(false);
-    }
-  }
-
   const actionLabel =
     job.contact_method === "walk_in"
       ? "Walk in"
       : job.contact_method === "call"
         ? "Call employer"
-        : "Chat on WhatsApp";
+        : job.contact_method === "whatsapp"
+          ? "Chat on WhatsApp"
+          : "Apply in app";
+
+  /* ======================================================
+     CONTINUE
+  ====================================================== */
+  function handleContinue() {
+    if (isEdit && jobId) {
+      navigation.navigate("PostJobFlow", {
+        screen: "PostJob",
+        params: {
+          job,
+          jobId,
+          mode: "edit_confirm",
+        },
+      });
+      return;
+    }
+
+    // CREATE or RENEW → go to payment
+    navigation.navigate("Payment", {
+      jobDraft: job,
+      mode,
+      jobId,
+    });
+  }
 
   /* ======================================================
      UI
@@ -50,41 +65,21 @@ export default function JobPreviewScreen({ route, navigation }: any) {
   return (
     <View style={{ flex: 1, backgroundColor: "#F8F9FB" }}>
       <View style={{ padding: 20 }}>
-        {/* HEADER */}
-        <Text
-          style={{
-            fontSize: 18,
-            fontWeight: "800",
-            color: "#0F172A",
-            marginBottom: 6,
-          }}
-        >
+        <Text style={{ fontSize: 18, fontWeight: "800", marginBottom: 6 }}>
           Preview job
         </Text>
 
-        <Text
-          style={{
-            fontSize: 13,
-            color: "#64748B",
-            marginBottom: 16,
-          }}
-        >
-          This is exactly how people near you will see your job.
+        <Text style={{ fontSize: 13, color: "#64748B", marginBottom: 16 }}>
+          This is exactly how people in your area will see your job.
         </Text>
 
         {job.locationName && (
-          <Text
-            style={{
-              fontSize: 13,
-              color: "#64748B",
-              marginBottom: 14,
-            }}
-          >
+          <Text style={{ fontSize: 13, color: "#64748B", marginBottom: 14 }}>
             Posting in {job.locationName}
           </Text>
         )}
 
-        {/* PREVIEW CARD (MATCHES FEED CARD LANGUAGE) */}
+        {/* PREVIEW CARD */}
         <View
           style={{
             backgroundColor: "#FFFFFF",
@@ -95,45 +90,29 @@ export default function JobPreviewScreen({ route, navigation }: any) {
             borderColor: "#E5E7EB",
           }}
         >
-          <Text
-            style={{
-              fontSize: 16,
-              fontWeight: "800",
-              color: "#0F172A",
-              marginBottom: 6,
-            }}
-          >
+          <Text style={{ fontSize: 16, fontWeight: "800", marginBottom: 6 }}>
             {job.title}
           </Text>
 
-          <Text
-            style={{
-              fontSize: 14,
-              color: "#334155",
-              marginBottom: 4,
-            }}
-          >
+          {job.description ? (
+            <Text style={{ fontSize: 13, marginBottom: 8 }}>
+              {job.description}
+            </Text>
+          ) : null}
+
+          <Text style={{ fontSize: 14, marginBottom: 4 }}>
             Pay: <Text style={{ fontWeight: "700" }}>{job.pay_type}</Text>
           </Text>
 
-          <Text
-            style={{
-              fontSize: 13,
-              color: "#475569",
-              marginBottom: 6,
-            }}
-          >
+          <Text style={{ fontSize: 13, marginBottom: 6 }}>
             Contact: {actionLabel}
-            {job.contact_method !== "walk_in" && ` • ${job.contact_phone}`}
+            {job.contact_method !== "walk_in" &&
+              job.contact_method !== "in_app" &&
+              job.contact_phone &&
+              ` • ${job.contact_phone}`}
           </Text>
 
-          <Text
-            style={{
-              fontSize: 12,
-              color: "#64748B",
-              marginBottom: 14,
-            }}
-          >
+          <Text style={{ fontSize: 12, color: "#64748B", marginBottom: 14 }}>
             Expires on {new Date(job.expires_at).toLocaleDateString()}
           </Text>
 
@@ -145,8 +124,15 @@ export default function JobPreviewScreen({ route, navigation }: any) {
               paddingHorizontal: 18,
               borderRadius: 999,
               backgroundColor:
-                job.contact_method === "whatsapp" ? "#0F172A" : "transparent",
-              borderWidth: job.contact_method === "whatsapp" ? 0 : 1.5,
+                job.contact_method === "whatsapp" ||
+                job.contact_method === "in_app"
+                  ? "#0F172A"
+                  : "transparent",
+              borderWidth:
+                job.contact_method === "whatsapp" ||
+                job.contact_method === "in_app"
+                  ? 0
+                  : 1.5,
               borderColor: "#0F172A",
             }}
           >
@@ -154,7 +140,10 @@ export default function JobPreviewScreen({ route, navigation }: any) {
               style={{
                 fontWeight: "700",
                 color:
-                  job.contact_method === "whatsapp" ? "#FFFFFF" : "#0F172A",
+                  job.contact_method === "whatsapp" ||
+                  job.contact_method === "in_app"
+                    ? "#FFFFFF"
+                    : "#0F172A",
               }}
             >
               {actionLabel}
@@ -173,28 +162,20 @@ export default function JobPreviewScreen({ route, navigation }: any) {
             borderColor: "#E5E7EB",
           }}
         >
-          <Text
-            style={{
-              fontSize: 13,
-              lineHeight: 18,
-              color: "#475569",
-            }}
-          >
-            This job will only be shown to people in your area. Applicants
-            contact you directly. You can delete this job anytime.
+          <Text style={{ fontSize: 13, color: "#475569", lineHeight: 18 }}>
+            This job will appear in your selected location.{" "}
+            {!isEdit && "Payment is required before it goes live."}
           </Text>
         </View>
 
-        {/* CONFIRM */}
+        {/* CONTINUE */}
         <Pressable
-          onPress={confirm}
-          disabled={posting}
+          onPress={handleContinue}
           style={{
             backgroundColor: "#0F172A",
             paddingVertical: 16,
             borderRadius: 16,
             marginBottom: 12,
-            opacity: posting ? 0.7 : 1,
           }}
         >
           <Text
@@ -205,25 +186,12 @@ export default function JobPreviewScreen({ route, navigation }: any) {
               fontSize: 16,
             }}
           >
-            {posting
-              ? isEdit
-                ? "Saving…"
-                : "Posting…"
-              : isEdit
-                ? "Confirm changes"
-                : "Confirm & post"}
+            {isEdit ? "Save changes" : "Continue"}
           </Text>
         </Pressable>
 
-        {/* BACK */}
-        <Pressable onPress={() => navigation.goBack()} disabled={posting}>
-          <Text
-            style={{
-              textAlign: "center",
-              fontSize: 13,
-              color: "#64748B",
-            }}
-          >
+        <Pressable onPress={() => navigation.goBack()}>
+          <Text style={{ textAlign: "center", fontSize: 13, color: "#64748B" }}>
             Go back and edit
           </Text>
         </Pressable>

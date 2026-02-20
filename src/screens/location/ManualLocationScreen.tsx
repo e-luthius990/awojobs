@@ -8,52 +8,83 @@ import {
   TextInput,
 } from "react-native";
 import * as Haptics from "expo-haptics";
+import * as Location from "expo-location";
 
 import { supabase } from "../../core/supabase";
-import { saveManualLocation } from "../../location/manual-location.cache";
+import { setManualLocation } from "../../location/manual-location.cache";
 import {
   getCachedList,
   setCachedList,
-} from "../../location/location-list.cache";
-import { resolveLocation } from "../../location/location.service";
+  saveCachedLocation,
+} from "../../location/location.cache";
 
 type Step = "district" | "town" | "sub_county";
 
+type LocationOption = {
+  id?: string;
+  district?: string;
+  town?: string;
+  sub_county?: string;
+};
+
+/* =====================================================
+   GPS ONLY (READ-ONLY)
+===================================================== */
+async function getGpsCoords() {
+  const { status } = await Location.getForegroundPermissionsAsync();
+  if (status !== "granted") return null;
+
+  try {
+    const pos = await Location.getCurrentPositionAsync({
+      accuracy: Location.Accuracy.Low,
+      timeout: 4000,
+    });
+
+    return {
+      lat: pos.coords.latitude,
+      lng: pos.coords.longitude,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export default function ManualLocationScreen({ navigation }: any) {
-  const listRef = useRef<FlatList>(null);
+  const listRef = useRef<FlatList<LocationOption>>(null);
 
   const [step, setStep] = useState<Step>("district");
   const [district, setDistrict] = useState<string | null>(null);
   const [town, setTown] = useState<string | null>(null);
 
-  const [options, setOptions] = useState<any[]>([]);
+  const [options, setOptions] = useState<LocationOption[]>([]);
   const [loading, setLoading] = useState(false);
   const [query, setQuery] = useState("");
 
   /* =====================================================
-     AUTO-DETECT NEAREST DISTRICT (SOFT FALLBACK)
+     AUTO-DETECT NEAREST DISTRICT
   ====================================================== */
   useEffect(() => {
     autoDetectDistrict();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function autoDetectDistrict() {
     try {
-      const loc = await resolveLocation();
-      if (!loc?.lat || !loc?.lng) return;
+      const coords = await getGpsCoords();
+      if (!coords) return;
 
-      const { data } = await supabase.rpc("get_nearest_district", {
-        p_lat: loc.lat,
-        p_lng: loc.lng,
+      const { data, error } = await supabase.rpc("get_nearest_district", {
+        p_lat: coords.lat,
+        p_lng: coords.lng,
       });
+
+      if (error) return;
 
       if (data?.[0]?.district) {
         setDistrict(data[0].district);
         setStep("town");
       }
     } catch {
-      // silent fallback → manual
+      // silent fallback
     }
   }
 
@@ -61,63 +92,65 @@ export default function ManualLocationScreen({ navigation }: any) {
      LOAD OPTIONS (CACHE → RPC)
   ====================================================== */
   useEffect(() => {
+    let mounted = true;
+
+    async function loadOptions() {
+      if (!mounted) return;
+      setLoading(true);
+
+      const cacheKey =
+        step === "district"
+          ? "districts"
+          : step === "town"
+            ? `towns:${district}`
+            : `subcounties:${district}:${town}`;
+
+      const cached = await getCachedList<LocationOption[]>(cacheKey);
+      if (cached && mounted) {
+        setOptions(cached);
+        setLoading(false);
+        return;
+      }
+
+      try {
+        let data: LocationOption[] = [];
+
+        if (step === "district") {
+          const { data: d } = await supabase.rpc("get_districts");
+          data = d ?? [];
+        }
+
+        if (step === "town" && district) {
+          const { data: d } = await supabase.rpc("get_towns", {
+            p_district: district,
+          });
+          data = d ?? [];
+        }
+
+        if (step === "sub_county" && district && town) {
+          const { data: d } = await supabase.rpc("get_sub_counties", {
+            p_district: district,
+            p_town: town,
+          });
+          data = d ?? [];
+        }
+
+        if (mounted) {
+          setOptions(data);
+          await setCachedList(cacheKey, data);
+        }
+      } catch {
+        if (mounted) setOptions([]);
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    }
+
     loadOptions();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    return () => {
+      mounted = false;
+    };
   }, [step, district, town]);
-
-  async function loadOptions() {
-    setLoading(true);
-
-    const cacheKey =
-      step === "district"
-        ? "districts"
-        : step === "town"
-          ? `towns:${district}`
-          : `subcounties:${district}:${town}`;
-
-    // 1️⃣ CACHE FIRST (30-day TTL handled in util)
-    const cached = await getCachedList<any>(cacheKey);
-    if (cached) {
-      setOptions(cached);
-      setLoading(false);
-      return;
-    }
-
-    try {
-      let data: any[] = [];
-
-      if (step === "district") {
-        const { data: d, error } = await supabase.rpc("get_districts");
-        if (error) throw error;
-        data = d ?? [];
-      }
-
-      if (step === "town" && district) {
-        const { data: d, error } = await supabase.rpc("get_towns", {
-          p_district: district,
-        });
-        if (error) throw error;
-        data = d ?? [];
-      }
-
-      if (step === "sub_county" && district && town) {
-        const { data: d, error } = await supabase.rpc("get_sub_counties", {
-          p_district: district,
-          p_town: town,
-        });
-        if (error) throw error;
-        data = d ?? [];
-      }
-
-      setOptions(data);
-      await setCachedList(cacheKey, data);
-    } catch (e) {
-      console.error("Failed to load locations", e);
-      setOptions([]);
-    } finally {
-      setLoading(false);
-    }
-  }
 
   /* =====================================================
      SEARCH FILTER
@@ -127,7 +160,7 @@ export default function ManualLocationScreen({ navigation }: any) {
     const q = query.toLowerCase();
 
     return options.filter((o) =>
-      (o.district || o.town || o.sub_county).toLowerCase().includes(q),
+      (o.district || o.town || o.sub_county || "").toLowerCase().includes(q),
     );
   }, [query, options]);
 
@@ -144,41 +177,55 @@ export default function ManualLocationScreen({ navigation }: any) {
         map[letter] = i;
       }
     });
+
     return map;
   }, [options, step]);
 
   /* =====================================================
      SELECT
   ====================================================== */
-  async function select(item: any) {
+  async function select(item: LocationOption) {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
     if (step === "district") {
-      setDistrict(item.district);
+      setDistrict(item.district ?? null);
       setQuery("");
       setStep("town");
       return;
     }
 
     if (step === "town") {
-      setTown(item.town);
+      setTown(item.town ?? null);
       setQuery("");
       setStep("sub_county");
       return;
     }
 
-    await saveManualLocation({
+    if (!item?.id || !district || !town || !item.sub_county) return;
+
+    await setManualLocation(item.id);
+
+    await saveCachedLocation({
       location_id: item.id,
-      district: district!,
-      town: town!,
+      district,
+      town,
       sub_county: item.sub_county,
+      source: "manual",
+      resolved_at: Date.now(),
     });
 
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
     navigation.reset({
       index: 0,
-      routes: [{ name: "FeedTab" }],
+      routes: [
+        {
+          name: "App",
+          state: {
+            routes: [{ name: "FeedTab" }],
+          },
+        },
+      ],
     });
   }
 
@@ -190,11 +237,13 @@ export default function ManualLocationScreen({ navigation }: any) {
       setStep("town");
       return;
     }
+
     if (step === "town") {
       setTown(null);
       setStep("district");
       return;
     }
+
     navigation.goBack();
   }
 
@@ -203,7 +252,6 @@ export default function ManualLocationScreen({ navigation }: any) {
   ====================================================== */
   return (
     <View style={{ flex: 1, backgroundColor: "#F8F9FB" }}>
-      {/* HEADER */}
       <View style={{ padding: 20 }}>
         <Pressable onPress={goBack} style={{ marginBottom: 10 }}>
           <Text style={{ fontWeight: "700" }}>← Back</Text>
@@ -234,14 +282,13 @@ export default function ManualLocationScreen({ navigation }: any) {
         />
       </View>
 
-      {/* LIST */}
       {loading ? (
         <ActivityIndicator style={{ marginTop: 40 }} />
       ) : (
         <FlatList
           ref={listRef}
           data={filtered}
-          keyExtractor={(_, i) => String(i)}
+          keyExtractor={(item, i) => item.id ?? `${step}-${i}`}
           contentContainerStyle={{ paddingHorizontal: 20 }}
           renderItem={({ item }) => (
             <Pressable
@@ -260,7 +307,6 @@ export default function ManualLocationScreen({ navigation }: any) {
         />
       )}
 
-      {/* A–Z INDEX */}
       {step === "district" && (
         <View
           style={{
@@ -277,7 +323,6 @@ export default function ManualLocationScreen({ navigation }: any) {
               onPress={() => {
                 const idx = alphaIndex[l];
                 if (idx !== undefined) {
-                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                   listRef.current?.scrollToIndex({
                     index: idx,
                     animated: true,

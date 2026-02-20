@@ -1,50 +1,58 @@
 import React, { useEffect, useState } from "react";
-import { View, Text, TextInput, Pressable, Alert } from "react-native";
+import {
+  View,
+  Text,
+  TextInput,
+  Pressable,
+  Alert,
+  StyleSheet,
+} from "react-native";
 
 import { resolveLocation } from "../../location/location.service";
-import { postJob } from "../../jobs/jobs.post";
 import { updateJob } from "../../jobs/jobs.update";
 import { Job } from "../../jobs/jobs.types";
 import { PostingSuccessPrompt } from "../../ui/components/PostingSuccessPrompt";
 
-export default function PostJobScreen({ navigation, route }: any) {
-  const editingJob: Job | undefined = route?.params?.job;
-  const isEdit = Boolean(editingJob);
+type ContactMethod = "call" | "whatsapp" | "walk_in" | "in_app";
+type PayType = "daily" | "weekly" | "monthly";
+
+type Props = {
+  navigation: any;
+  route: any;
+};
+
+export default function PostJobScreen({ navigation, route }: Props) {
+  const { job: editingJob, jobId, mode = "create" } = route?.params ?? {};
+
+  const isEdit = mode === "edit";
+  const isRenew = mode === "renew";
 
   const [locationId, setLocationId] = useState<string | null>(null);
   const [locationName, setLocationName] = useState<string | null>(null);
 
   const [title, setTitle] = useState(editingJob?.title ?? "");
-  const [payType, setPayType] = useState<"daily" | "weekly" | "monthly">(
+  const [description, setDescription] = useState(editingJob?.description ?? "");
+
+  const [payType, setPayType] = useState<PayType>(
     editingJob?.pay_type ?? "daily",
   );
 
-  const [contactMethod, setContactMethod] = useState<
-    "call" | "whatsapp" | "walk_in"
-  >(editingJob?.contact_method ?? "call");
+  const [contactMethod, setContactMethod] = useState<ContactMethod>(
+    editingJob?.contact_method ?? "call",
+  );
 
   const [phone, setPhone] = useState(editingJob?.contact_phone ?? "");
 
-  const [expiryDays, setExpiryDays] = useState(() => {
-    if (!editingJob) return 7;
-    const diff =
-      (new Date(editingJob.expires_at).getTime() - Date.now()) /
-      (1000 * 60 * 60 * 24);
-    return Math.max(1, Math.ceil(diff));
-  });
-
+  const [expiryDays] = useState<number>(7);
   const [loading, setLoading] = useState(false);
-
-  // 🔹 NEW: posted job state (triggers success prompt)
   const [postedJob, setPostedJob] = useState<Job | null>(null);
 
-  /* =====================================================
-     LOCATION
-  ====================================================== */
+  /* ================= LOCATION ================= */
   useEffect(() => {
     (async () => {
       if (editingJob) {
         setLocationId(editingJob.location_id);
+        setLocationName(editingJob.location_name ?? null);
         return;
       }
 
@@ -54,14 +62,29 @@ export default function PostJobScreen({ navigation, route }: any) {
       setLocationId(loc.location_id);
       setLocationName([loc.town, loc.sub_county].filter(Boolean).join(", "));
     })();
-  }, []);
+  }, [editingJob]);
 
-  /* =====================================================
-     PREVIEW
-  ====================================================== */
+  function computeExpiry(): Date {
+    if (isEdit && editingJob?.expires_at) {
+      return new Date(editingJob.expires_at);
+    }
+
+    const expires = new Date();
+    expires.setDate(expires.getDate() + expiryDays);
+    return expires;
+  }
+
+  function normalizePhone(input: string) {
+    const cleaned = input.replace(/\s+/g, "");
+    if (cleaned.startsWith("+256")) return cleaned;
+    if (cleaned.startsWith("0")) return "+256" + cleaned.slice(1);
+    return cleaned;
+  }
+
+  /* ================= PREVIEW ================= */
   function goPreview() {
     if (!locationId) {
-      Alert.alert("Location unavailable");
+      Alert.alert("Location required", "Please set your location first.");
       return;
     }
 
@@ -70,69 +93,56 @@ export default function PostJobScreen({ navigation, route }: any) {
       return;
     }
 
-    if (contactMethod !== "walk_in" && phone.trim().length < 9) {
+    if (contactMethod !== "walk_in" && normalizePhone(phone).length < 12) {
       Alert.alert("Invalid phone number");
       return;
     }
 
-    const expires = new Date();
-    expires.setDate(expires.getDate() + expiryDays);
+    const draft = {
+      title: title.trim(),
+      description: description.trim() || null,
+      pay_type: payType,
+      contact_method: contactMethod,
+      contact_phone: contactMethod === "walk_in" ? null : normalizePhone(phone),
+      expires_at: computeExpiry().toISOString(),
+      location_id: locationId,
+    };
 
-    navigation.navigate("Preview", {
-      job: {
-        ...(editingJob ?? {}),
-        title: title.trim(),
-        pay_type: payType,
-        contact_method: contactMethod,
-        contact_phone: phone.trim(),
-        expires_at: expires.toISOString(),
-        location_id: locationId,
-        locationName,
-      },
-      onConfirm: submit,
-      isEdit,
+    if (isEdit && jobId) {
+      navigation.navigate("Preview", {
+        job: draft,
+        isEdit: true,
+        onConfirm: submitEdit,
+      });
+      return;
+    }
+
+    // CREATE or RENEW → Payment required
+    navigation.navigate("Payment", {
+      jobDraft: draft,
+      mode,
+      jobId,
     });
   }
 
-  /* =====================================================
-     SUBMIT
-  ====================================================== */
-  async function submit() {
-    if (!locationId) return;
+  /* ================= EDIT SUBMIT ================= */
+  async function submitEdit() {
+    if (!jobId) return;
 
     setLoading(true);
+
     try {
-      const expires = new Date();
-      expires.setDate(expires.getDate() + expiryDays);
-
-      if (isEdit && editingJob) {
-        await updateJob(editingJob.id, {
-          title,
-          pay_type: payType,
-          contact_method: contactMethod,
-          contact_phone: phone,
-          expires_at: expires,
-        });
-      } else {
-        await postJob({
-          title,
-          pay_type: payType,
-          contact_method: contactMethod,
-          contact_phone: phone,
-          expires_at: expires,
-          location_id: locationId,
-        });
-      }
-
-      // 🔹 Instead of alert + pop, show success share prompt
-      setPostedJob({
-        ...(editingJob ?? {}),
-        title,
+      const saved = await updateJob(jobId, {
+        title: title.trim(),
+        description: description.trim() || null,
         pay_type: payType,
         contact_method: contactMethod,
-        contact_phone: phone,
-        expires_at: expires.toISOString(),
-      } as Job);
+        contact_phone:
+          contactMethod === "walk_in" ? null : normalizePhone(phone),
+        expires_at: computeExpiry(),
+      });
+
+      setPostedJob(saved);
     } catch (e: any) {
       Alert.alert("Error", e.message ?? "Try again.");
     } finally {
@@ -140,9 +150,6 @@ export default function PostJobScreen({ navigation, route }: any) {
     }
   }
 
-  /* =====================================================
-     SUCCESS → SHARE PROMPT
-  ====================================================== */
   if (postedJob) {
     return (
       <PostingSuccessPrompt
@@ -152,41 +159,32 @@ export default function PostJobScreen({ navigation, route }: any) {
     );
   }
 
-  /* =====================================================
-     UI
-  ====================================================== */
   return (
-    <View style={{ flex: 1, backgroundColor: "#F8F9FB" }}>
+    <View style={styles.container}>
       <View style={{ padding: 20 }}>
-        {/* HEADER */}
-        <Text
-          style={{
-            fontSize: 20,
-            fontWeight: "800",
-            color: "#0F172A",
-            marginBottom: 6,
-          }}
-        >
-          {isEdit ? "Edit job" : "Post a job"}
+        <Text style={styles.header}>
+          {isEdit ? "Edit job" : isRenew ? "Renew job" : "Post a job"}
         </Text>
 
         {locationName && !isEdit && (
-          <Text style={{ fontSize: 13, color: "#64748B", marginBottom: 20 }}>
-            Posting in {locationName}
-          </Text>
+          <Text style={styles.subtle}>Posting in {locationName}</Text>
         )}
 
-        {/* TITLE */}
-        <Text style={label}>Job title</Text>
+        {/* Title */}
+        <Text style={styles.label}>Job title</Text>
+        <TextInput value={title} onChangeText={setTitle} style={styles.input} />
+
+        {/* Description */}
+        <Text style={styles.label}>Job description</Text>
         <TextInput
-          placeholder="e.g. House cleaner needed"
-          value={title}
-          onChangeText={setTitle}
-          style={input}
+          value={description}
+          onChangeText={setDescription}
+          multiline
+          style={[styles.input, { height: 100 }]}
         />
 
-        {/* PAY TYPE */}
-        <Text style={label}>Pay type</Text>
+        {/* Pay Type */}
+        <Text style={styles.label}>Pay type</Text>
         <Row>
           {(["daily", "weekly", "monthly"] as const).map((p) => (
             <Chip key={p} active={payType === p} onPress={() => setPayType(p)}>
@@ -195,10 +193,10 @@ export default function PostJobScreen({ navigation, route }: any) {
           ))}
         </Row>
 
-        {/* CONTACT METHOD */}
-        <Text style={label}>How should people contact you?</Text>
+        {/* Contact Method */}
+        <Text style={styles.label}>How should people contact you?</Text>
         <Row>
-          {(["call", "whatsapp", "walk_in"] as const).map((m) => (
+          {(["call", "whatsapp", "in_app", "walk_in"] as const).map((m) => (
             <Chip
               key={m}
               active={contactMethod === m}
@@ -209,40 +207,25 @@ export default function PostJobScreen({ navigation, route }: any) {
           ))}
         </Row>
 
-        {/* PHONE */}
+        {/* Phone */}
         {contactMethod !== "walk_in" && (
           <>
-            <Text style={label}>Contact phone</Text>
+            <Text style={styles.label}>Contact phone</Text>
             <TextInput
-              placeholder="e.g. 0700 123 456"
               value={phone}
               onChangeText={setPhone}
               keyboardType="phone-pad"
-              style={input}
+              style={styles.input}
             />
           </>
         )}
 
-        {/* PRIMARY ACTION */}
         <Pressable
           onPress={goPreview}
           disabled={loading}
-          style={{
-            backgroundColor: "#0F172A",
-            paddingVertical: 14,
-            borderRadius: 16,
-            marginTop: 20,
-            opacity: loading ? 0.7 : 1,
-          }}
+          style={[styles.primaryButton, { opacity: loading ? 0.7 : 1 }]}
         >
-          <Text
-            style={{
-              color: "white",
-              textAlign: "center",
-              fontWeight: "800",
-              fontSize: 15,
-            }}
-          >
+          <Text style={styles.primaryText}>
             {isEdit ? "Preview changes" : "Preview job"}
           </Text>
         </Pressable>
@@ -251,28 +234,62 @@ export default function PostJobScreen({ navigation, route }: any) {
   );
 }
 
-/* -------------------------------------------------------
-   STYLES
--------------------------------------------------------- */
-const input = {
-  borderWidth: 1,
-  borderColor: "#E5E7EB",
-  padding: 14,
-  borderRadius: 14,
-  backgroundColor: "#FFFFFF",
-  marginBottom: 16,
-};
+/* ================= STYLES ================= */
 
-const label = {
-  fontSize: 13,
-  fontWeight: "700",
-  color: "#334155",
-  marginBottom: 6,
-};
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: "#F8F9FB",
+  },
+  header: {
+    fontSize: 20,
+    fontWeight: "800",
+    color: "#0F172A",
+    marginBottom: 6,
+  },
+  subtle: {
+    fontSize: 13,
+    color: "#64748B",
+    marginBottom: 20,
+  },
+  label: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#334155",
+    marginBottom: 6,
+  },
+  input: {
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    padding: 14,
+    borderRadius: 14,
+    backgroundColor: "#FFFFFF",
+    marginBottom: 16,
+  },
+  primaryButton: {
+    backgroundColor: "#0F172A",
+    paddingVertical: 14,
+    borderRadius: 16,
+    marginTop: 20,
+  },
+  primaryText: {
+    color: "white",
+    textAlign: "center",
+    fontWeight: "800",
+    fontSize: 15,
+  },
+});
 
 function Row({ children }: any) {
   return (
-    <View style={{ flexDirection: "row", marginBottom: 16 }}>{children}</View>
+    <View
+      style={{
+        flexDirection: "row",
+        marginBottom: 16,
+      }}
+    >
+      {children}
+    </View>
   );
 }
 

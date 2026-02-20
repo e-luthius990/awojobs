@@ -1,8 +1,6 @@
 import "dotenv/config";
 import { ExpoConfig } from "expo/config";
 
-const isDev = process.env.NODE_ENV === "development";
-
 const config: ExpoConfig = {
   name: "AwoJobs",
   slug: "awojobs",
@@ -22,16 +20,26 @@ const config: ExpoConfig = {
 
   android: {
     package: "com.awojobs.app",
+    googleServicesFile: "./google-services.json",
     adaptiveIcon: {
       foregroundImage: "./assets/adaptive-icon.png",
       backgroundColor: "#0F172A",
     },
   },
 
-  // OTA: disabled in dev, safe in prod
+  plugins: [
+    "expo-secure-store",
+    [
+      "expo-notifications",
+      {
+        icon: "./assets/icon.png",
+        color: "#0F172A",
+      },
+    ],
+  ],
+
   updates: {
-    enabled: !isDev,
-    fallbackToCacheTimeout: 30000,
+    enabled: false,
   },
 
   runtimeVersion: {
@@ -39,10 +47,12 @@ const config: ExpoConfig = {
   },
 
   extra: {
-    SUPABASE_URL: process.env.SUPABASE_URL,
-    SUPABASE_ANON_KEY: process.env.SUPABASE_ANON_KEY,
+    SUPABASE_URL: process.env.EXPO_PUBLIC_SUPABASE_URL,
+    SUPABASE_ANON_KEY: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY,
 
-    DEV_AUTH_BYPASS: isDev,
+    eas: {
+      projectId: "3381d51f-b9a7-4ae7-a442-77f7e9986e1d",
+    },
   },
 
   assetBundlePatterns: ["**/*"],

@@ -1,165 +1,244 @@
-import { useEffect, useRef, useState } from "react";
-import { Job } from "../jobs/jobs.types";
-import { fetchJobsForLocationCursor } from "../jobs/jobs.service";
-import { JobsCursor } from "../jobs/jobs.cursor";
-import { jobFreshnessScore } from "../jobs/jobs.freshness";
+import { useEffect, useRef, useState, useCallback, useMemo } from "react";
+import { JobWithCoords } from "../jobs/jobs.types";
+import { getDeviceHash } from "../security/device";
+import { supabaseAnon } from "../core/supabaseAnon";
+import { ENV } from "../env";
 
-/* ---------------------------------------------
-   HELPERS
----------------------------------------------- */
+/* =====================================================
+   CONFIG
+===================================================== */
 
-function sortJobs(jobs: Job[]) {
-  return [...jobs].sort((a, b) => {
-    const scoreDiff =
-      jobFreshnessScore(b) - jobFreshnessScore(a);
+const REQUEST_TIMEOUT_MS = 10000;
 
-    if (scoreDiff !== 0) return scoreDiff;
+/* =====================================================
+   SIMPLE FEED CACHE (SAFE SUBSET)
+   Keyed by location + scope
+===================================================== */
 
-    // Stable fallback: newest first
-    return (
-      new Date(b.created_at).getTime() -
-      new Date(a.created_at).getTime()
-    );
+const feedCache = new Map<
+  string,
+  { jobs: JobWithCoords[]; premium: any }
+>();
+
+/* =====================================================
+   INTERNAL HELPERS
+===================================================== */
+
+async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs = REQUEST_TIMEOUT_MS
+): Promise<T> {
+  let timeoutHandle: NodeJS.Timeout;
+
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutHandle = setTimeout(() => {
+      reject(new Error("Feed request timed out."));
+    }, timeoutMs);
   });
+
+  try {
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    clearTimeout(timeoutHandle!);
+  }
 }
 
-function dedupe(existing: Job[], incoming: Job[]) {
-  const seen = new Set(existing.map(j => j.id));
-  return incoming.filter(j => !seen.has(j.id));
-}
-
-/* ---------------------------------------------
+/* =====================================================
    HOOK
----------------------------------------------- */
+===================================================== */
+
+type PremiumState = {
+  active: boolean;
+  expires_at: string | null;
+  days_remaining: number;
+  scope: "local" | "national";
+  phone: string | null;
+};
 
 export function useJobFeed(locationId: string | null) {
-  const [jobs, setJobs] = useState<Job[]>([]);
-  const [cursor, setCursor] = useState<JobsCursor | null>(null);
-
+  const [jobs, setJobs] = useState<JobWithCoords[]>([]);
   const [loading, setLoading] = useState(false);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [hasMore, setHasMore] = useState(true);
+  const [premium, setPremium] = useState<PremiumState | null>(null);
+  const [requestedScope, setRequestedScope] =
+    useState<"local" | "national">("local");
 
-  const [pendingJobs, setPendingJobs] = useState<Job[]>([]);
+  const deviceHashRef = useRef<string | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const channelRef = useRef<any>(null);
+  const cursorRef = useRef<string | null>(null);
+  const isMountedRef = useRef(true);
 
-  const mounted = useRef(true);
+  /* ---------------- INIT DEVICE HASH ---------------- */
 
-  /* ---------------------------------------------
-     RESET ON LOCATION CHANGE
-  ---------------------------------------------- */
+  useEffect(() => {
+    (async () => {
+      deviceHashRef.current = await getDeviceHash();
+    })();
+  }, []);
+
+  /* ---------------- CACHE KEY ---------------- */
+
+  const cacheKey = useMemo(() => {
+    if (!locationId) return null;
+    return `${locationId}-${requestedScope}`;
+  }, [locationId, requestedScope]);
+
+  /* ---------------- FETCH FEED (CURSOR SAFE) ---------------- */
+
+  const fetchFeed = useCallback(
+    async (opts?: { append?: boolean }) => {
+      if (!locationId || !deviceHashRef.current) return;
+
+      if (abortRef.current) {
+        abortRef.current.abort();
+      }
+
+      const controller = new AbortController();
+      abortRef.current = controller;
+
+      const append = opts?.append ?? false;
+
+      if (!append) setLoading(true);
+
+      try {
+        const session = await supabaseAnon.auth.getSession();
+        const token = session.data.session?.access_token;
+
+        const res = await withTimeout(
+          fetch(`${ENV.SUPABASE_URL}/functions/v1/feed`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            },
+            body: JSON.stringify({
+              location_id: locationId,
+              device_hash: deviceHashRef.current,
+              limit: 20,
+              requested_scope: requestedScope,
+              cursor: append ? cursorRef.current : null,
+            }),
+            signal: controller.signal,
+          })
+        );
+
+        if (!res.ok) {
+          throw new Error("Feed failed");
+        }
+
+        const data = await res.json();
+
+        if (!isMountedRef.current) return;
+
+        const newJobs: JobWithCoords[] = data.jobs ?? [];
+
+        cursorRef.current = data.next_cursor ?? null;
+
+        setJobs((prev) =>
+          append ? [...prev, ...newJobs] : newJobs
+        );
+
+        setPremium(data.premium ?? null);
+
+        if (
+          requestedScope === "national" &&
+          data.premium?.scope !== "national"
+        ) {
+          setRequestedScope("local");
+        }
+
+        if (cacheKey) {
+          feedCache.set(cacheKey, {
+            jobs: append ? [...jobs, ...newJobs] : newJobs,
+            premium: data.premium ?? null,
+          });
+        }
+      } catch (err) {
+        if (__DEV__) {
+          console.warn("[useJobFeed] Fetch error");
+        }
+      } finally {
+        if (isMountedRef.current) {
+          setLoading(false);
+        }
+      }
+    },
+    [locationId, requestedScope, cacheKey]
+  );
+
+  /* ---------------- INITIAL LOAD + CACHE HYDRATION ---------------- */
+
+  useEffect(() => {
+    if (!locationId || !cacheKey) return;
+
+    isMountedRef.current = true;
+
+    const cached = feedCache.get(cacheKey);
+
+    if (cached) {
+      setJobs(cached.jobs);
+      setPremium(cached.premium);
+      setLoading(false);
+    } else {
+      setJobs([]);
+      fetchFeed();
+    }
+
+    return () => {
+      isMountedRef.current = false;
+      abortRef.current?.abort();
+    };
+  }, [locationId, requestedScope]);
+
+  /* ---------------- REALTIME (PRECISE) ---------------- */
+
   useEffect(() => {
     if (!locationId) return;
 
-    mounted.current = true;
+    if (channelRef.current) {
+      supabaseAnon.removeChannel(channelRef.current);
+    }
 
-    setJobs([]);
-    setCursor(null);
-    setPendingJobs([]);
-    setHasMore(true);
+    const channel = supabaseAnon
+      .channel(`feed-${locationId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "jobs",
+        },
+        () => {
+          // Refresh silently without blocking UI
+          fetchFeed();
+        }
+      )
+      .subscribe();
 
-    loadInitial();
+    channelRef.current = channel;
 
     return () => {
-      mounted.current = false;
-    };
-  }, [locationId]);
-
-  /* ---------------------------------------------
-     INITIAL LOAD
-  ---------------------------------------------- */
-  async function loadInitial() {
-    setLoading(true);
-    try {
-      const page = await fetchJobsForLocationCursor(locationId!);
-      if (!mounted.current) return;
-
-      setJobs(sortJobs(page.jobs));
-      setCursor(page.nextCursor);
-      setHasMore(Boolean(page.nextCursor));
-    } finally {
-      if (mounted.current) setLoading(false);
-    }
-  }
-
-  /* ---------------------------------------------
-     LOAD MORE (OLDER JOBS)
-  ---------------------------------------------- */
-  async function loadMore() {
-    if (!locationId || !cursor || loadingMore || !hasMore) return;
-
-    setLoadingMore(true);
-    try {
-      const page = await fetchJobsForLocationCursor(
-        locationId,
-        cursor,
-        "older"
-      );
-
-      if (!mounted.current) return;
-
-      setJobs(prev =>
-        sortJobs([...prev, ...dedupe(prev, page.jobs)])
-      );
-      setCursor(page.nextCursor);
-      setHasMore(Boolean(page.nextCursor));
-    } finally {
-      if (mounted.current) setLoadingMore(false);
-    }
-  }
-
-  /* ---------------------------------------------
-     SCAN NEW (SILENT, NON-DESTRUCTIVE)
-  ---------------------------------------------- */
-  async function scanNew() {
-    if (!locationId || jobs.length === 0 || loading) return;
-
-    setLoading(true);
-    try {
-      const newest = jobs[0];
-
-      const page = await fetchJobsForLocationCursor(
-        locationId,
-        { created_at: newest.created_at, id: newest.id },
-        "newer"
-      );
-
-      if (!mounted.current || page.jobs.length === 0) return;
-
-      const fresh = dedupe(jobs, page.jobs);
-
-      if (fresh.length) {
-        setPendingJobs(prev =>
-          sortJobs([...prev, ...fresh])
-        );
+      if (channelRef.current) {
+        supabaseAnon.removeChannel(channelRef.current);
+        channelRef.current = null;
       }
-    } finally {
-      if (mounted.current) setLoading(false);
-    }
-  }
+    };
+  }, [locationId, requestedScope, fetchFeed]);
 
-  /* ---------------------------------------------
-     APPLY NEW JOBS (USER CONFIRMED)
-  ---------------------------------------------- */
-  function applyNew() {
-    if (!pendingJobs.length) return;
+  /* ---------------- PAGINATION ---------------- */
 
-    setJobs(prev =>
-      sortJobs([...pendingJobs, ...prev])
-    );
-    setPendingJobs([]);
-  }
+  const loadMore = useCallback(() => {
+    if (!cursorRef.current || loading) return;
+    fetchFeed({ append: true });
+  }, [loading, fetchFeed]);
 
   return {
     jobs,
-
     loading,
-    loadingMore,
-    hasMore,
-
+    premium,
+    requestedScope,
+    setRequestedScope,
+    refresh: fetchFeed,
     loadMore,
-
-    scanNew,
-    pendingCount: pendingJobs.length,
-    applyNew,
   };
 }
