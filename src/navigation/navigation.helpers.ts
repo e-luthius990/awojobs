@@ -1,13 +1,19 @@
 // src/navigation/navigation.helpers.ts
 
-import { CommonActions, NavigationProp } from "@react-navigation/native";
+import {
+  CommonActions,
+  NavigationProp,
+} from "@react-navigation/native";
+
+import type { RootStackParamList } from "./navigation.types";
 
 /**
- * Reset app state safely to Feed tab.
- * Avoids deep nested state injection.
- * Keeps navigation tree stable.
+ * Safely reset app to root App screen.
+ * Role-based navigators will handle their own default tab.
  */
-export function resetToFeed(navigation: NavigationProp<any>) {
+export function resetToApp(
+  navigation: NavigationProp<RootStackParamList>
+) {
   navigation.dispatch(
     CommonActions.reset({
       index: 0,
@@ -18,11 +24,4 @@ export function resetToFeed(navigation: NavigationProp<any>) {
       ],
     })
   );
-
-  // After root reset, navigate to FeedTab explicitly
-  requestAnimationFrame(() => {
-    navigation.navigate("App", {
-      screen: "FeedTab",
-    });
-  });
 }

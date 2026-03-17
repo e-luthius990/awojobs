@@ -6,28 +6,49 @@ import { ENV } from "../core/config";
 /* ---------------------------------------------
    CONFIG
 ---------------------------------------------- */
-const BASE_URL = ENV.WEB_BASE_URL; // e.g. https://awojobs.app
+
+const BASE_URL = ENV.WEB_BASE_URL?.replace(/\/+$/, "") ?? "";
 
 /* ---------------------------------------------
-   SAFE TEXT HELPERS
+   HELPERS
 ---------------------------------------------- */
+
 function sanitize(text?: string | null, max = 280) {
   if (!text) return "";
   return text.trim().replace(/\s+/g, " ").slice(0, max);
 }
 
+function formatPayType(type: string) {
+  return type.charAt(0).toUpperCase() + type.slice(1);
+}
+
+function formatExpiry(expiresAt?: string | null) {
+  if (!expiresAt) return "N/A";
+
+  const date = new Date(expiresAt);
+  if (isNaN(date.getTime())) return "N/A";
+
+  return date.toLocaleDateString("en-UG");
+}
+
 /* ---------------------------------------------
    BUILD SHARE TEXT
 ---------------------------------------------- */
-export function buildJobShareText(job: Job) {
-  const expires = new Date(job.expires_at).toLocaleDateString("en-UG");
 
-  const contactLine =
-    job.contact_method === "walk_in"
-      ? "Apply: Walk-in"
-      : job.contact_method === "in_app"
-        ? "Apply: In-app"
-        : `Contact: ${job.contact_method.toUpperCase()} • ${job.contact_phone}`;
+export function buildJobShareText(job: Job) {
+  const expires = formatExpiry(job.expires_at);
+
+  let contactLine = "Apply: In-app";
+
+  if (job.contact_method === "walk_in") {
+    contactLine = "Apply: Walk-in";
+  } else if (
+    (job.contact_method === "call" ||
+      job.contact_method === "whatsapp") &&
+    job.contact_phone
+  ) {
+    contactLine = `Contact: ${job.contact_method.toUpperCase()} • ${job.contact_phone}`;
+  }
 
   const description = sanitize(job.description, 300);
 
@@ -40,7 +61,7 @@ export function buildJobShareText(job: Job) {
   return (
     `Job Opportunity — AwoJobs\n\n` +
     `${sanitize(job.title, 120)}\n` +
-    `Pay: ${job.pay_type}\n` +
+    `Pay: ${formatPayType(job.pay_type)}\n` +
     `${contactLine}\n` +
     `Expires: ${expires}` +
     `${details}\n\n` +
@@ -51,6 +72,7 @@ export function buildJobShareText(job: Job) {
 /* ---------------------------------------------
    SHARE JOB
 ---------------------------------------------- */
+
 export async function shareJob(job: Job) {
   const message = buildJobShareText(job);
 
@@ -65,7 +87,7 @@ export async function shareJob(job: Job) {
       return;
     }
   } catch {
-    // fallback
+    // fall through to WhatsApp
   }
 
   /* ---------- WhatsApp Fallback ---------- */

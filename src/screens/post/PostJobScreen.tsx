@@ -1,27 +1,79 @@
-import React, { useEffect, useState } from "react";
-import {
-  View,
-  Text,
-  TextInput,
-  Pressable,
-  Alert,
-  StyleSheet,
-} from "react-native";
+import React, {
+  useEffect,
+  useMemo,
+  useState,
+  useCallback,
+  type ViewStyle,
+} from "react";
+import { View } from "react-native";
 
+import { supabase } from "../../core/supabase";
 import { resolveLocation } from "../../location/location.service";
 import { updateJob } from "../../jobs/jobs.update";
 import { Job } from "../../jobs/jobs.types";
 import { PostingSuccessPrompt } from "../../ui/components/PostingSuccessPrompt";
 
+import { useTheme } from "../../theme/useTheme";
+import { AppScreen } from "../../ui/AppScreen";
+import { AppHeader } from "../../ui/AppHeader";
+import { AppText } from "../../ui/AppText";
+import { AppInput } from "../../ui/AppInput";
+import { AppButton } from "../../ui/AppButton";
+import { AppCard } from "../../ui/AppCard";
+import { FilterChip } from "../../ui/FilterChip";
+import { InlineAlert } from "../../ui/InlineAlert";
+
 type ContactMethod = "call" | "whatsapp" | "walk_in" | "in_app";
-type PayType = "daily" | "weekly" | "monthly";
+type PayType = "daily" | "weekly" | "monthly" | "not_specified";
 
 type Props = {
   navigation: any;
   route: any;
 };
 
+function formatLocationName(loc: {
+  district?: string | null;
+  town?: string | null;
+  sub_county?: string | null;
+}) {
+  return [loc.sub_county, loc.town, loc.district].filter(Boolean).join(", ");
+}
+
+function formatPayTypeLabel(value: PayType) {
+  if (value === "not_specified") return "Not specified";
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function formatContactMethodLabel(value: ContactMethod) {
+  if (value === "walk_in") return "Walk in";
+  if (value === "in_app") return "In app";
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function normalizePhone(input: string) {
+  const digits = input.replace(/\D/g, "");
+
+  if (digits.startsWith("256") && digits.length === 12) {
+    return `+${digits}`;
+  }
+
+  if (digits.startsWith("0") && digits.length === 10) {
+    return `+256${digits.slice(1)}`;
+  }
+
+  if (digits.startsWith("7") && digits.length === 9) {
+    return `+256${digits}`;
+  }
+
+  return input.trim();
+}
+
+function isValidUgPhone(input: string) {
+  return /^\+256\d{9}$/.test(normalizePhone(input));
+}
+
 export default function PostJobScreen({ navigation, route }: Props) {
+  const { theme } = useTheme();
   const { job: editingJob, jobId, mode = "create" } = route?.params ?? {};
 
   const isEdit = mode === "edit";
@@ -32,123 +84,281 @@ export default function PostJobScreen({ navigation, route }: Props) {
 
   const [title, setTitle] = useState(editingJob?.title ?? "");
   const [description, setDescription] = useState(editingJob?.description ?? "");
-
   const [payType, setPayType] = useState<PayType>(
-    editingJob?.pay_type ?? "daily",
+    editingJob?.pay_type ?? "not_specified",
   );
-
   const [contactMethod, setContactMethod] = useState<ContactMethod>(
     editingJob?.contact_method ?? "call",
   );
-
   const [phone, setPhone] = useState(editingJob?.contact_phone ?? "");
 
-  const [expiryDays] = useState<number>(7);
   const [loading, setLoading] = useState(false);
   const [postedJob, setPostedJob] = useState<Job | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  /* ================= LOCATION ================= */
+  const fieldDisabled = isRenew;
+
   useEffect(() => {
-    (async () => {
+    let active = true;
+
+    const loadLocation = async () => {
       if (editingJob) {
-        setLocationId(editingJob.location_id);
-        setLocationName(editingJob.location_name ?? null);
+        if (!active) return;
+
+        setLocationId(editingJob.location_id ?? null);
+        setLocationName(
+          formatLocationName({
+            district: editingJob.district ?? null,
+            town: editingJob.town ?? null,
+            sub_county: editingJob.sub_county ?? null,
+          }) ||
+            editingJob.location_name ||
+            null,
+        );
         return;
       }
 
-      const loc = await resolveLocation();
-      if (!loc?.location_id) return;
+      try {
+        const loc = await resolveLocation();
+        if (!active || !loc?.location_id) return;
 
-      setLocationId(loc.location_id);
-      setLocationName([loc.town, loc.sub_county].filter(Boolean).join(", "));
-    })();
+        setLocationId(loc.location_id);
+        setLocationName(
+          formatLocationName({
+            district: loc.district ?? null,
+            town: loc.town ?? null,
+            sub_county: loc.sub_county ?? null,
+          }) || null,
+        );
+      } catch {
+        if (!active) return;
+      }
+    };
+
+    void loadLocation();
+
+    return () => {
+      active = false;
+    };
   }, [editingJob]);
 
-  function computeExpiry(): Date {
-    if (isEdit && editingJob?.expires_at) {
-      return new Date(editingJob.expires_at);
-    }
+  useEffect(() => {
+    let active = true;
 
-    const expires = new Date();
-    expires.setDate(expires.getDate() + expiryDays);
-    return expires;
-  }
+    if (editingJob || phone) return;
 
-  function normalizePhone(input: string) {
-    const cleaned = input.replace(/\s+/g, "");
-    if (cleaned.startsWith("+256")) return cleaned;
-    if (cleaned.startsWith("0")) return "+256" + cleaned.slice(1);
-    return cleaned;
-  }
+    supabase
+      .from("profiles")
+      .select("phone_number")
+      .single()
+      .then(({ data }) => {
+        if (!active) return;
+        if (data?.phone_number) {
+          setPhone(data.phone_number);
+        }
+      })
+      .catch(() => {});
 
-  /* ================= PREVIEW ================= */
-  function goPreview() {
+    return () => {
+      active = false;
+    };
+  }, [editingJob, phone]);
+
+  const titleError = useMemo(() => {
+    if (!title) return null;
+    if (title.trim().length < 4) return "Title must be at least 4 characters.";
+    return null;
+  }, [title]);
+
+  const phoneError = useMemo(() => {
+    if (contactMethod === "walk_in" || contactMethod === "in_app") return null;
+    if (!phone) return null;
+    if (!isValidUgPhone(phone)) return "Use a valid Uganda phone number.";
+    return null;
+  }, [contactMethod, phone]);
+
+  const contentStyle = useMemo<ViewStyle>(
+    () => ({
+      gap: theme.spacing.md,
+    }),
+    [theme.spacing.md],
+  );
+
+  const sectionCardStyle = useMemo<ViewStyle>(
+    () => ({
+      gap: theme.spacing.md,
+    }),
+    [theme.spacing.md],
+  );
+
+  const chipRowStyle = useMemo<ViewStyle>(
+    () => ({
+      flexDirection: "row",
+      flexWrap: "wrap",
+      gap: theme.spacing.xs,
+    }),
+    [theme.spacing.xs],
+  );
+
+  const footerSpaceStyle = useMemo<ViewStyle>(
+    () => ({
+      height: theme.spacing.md,
+    }),
+    [theme.spacing.md],
+  );
+
+  const validateBeforeSubmit = useCallback(() => {
     if (!locationId) {
-      Alert.alert("Location required", "Please set your location first.");
-      return;
+      setError("Location is required.");
+      return false;
     }
 
     if (title.trim().length < 4) {
-      Alert.alert("Job title too short");
-      return;
+      setError("Job title must be at least 4 characters.");
+      return false;
     }
 
-    if (contactMethod !== "walk_in" && normalizePhone(phone).length < 12) {
-      Alert.alert("Invalid phone number");
-      return;
+    if (
+      contactMethod !== "walk_in" &&
+      contactMethod !== "in_app" &&
+      !isValidUgPhone(phone)
+    ) {
+      setError("Use a valid Uganda phone number.");
+      return false;
     }
 
-    const draft = {
-      title: title.trim(),
-      description: description.trim() || null,
-      pay_type: payType,
-      contact_method: contactMethod,
-      contact_phone: contactMethod === "walk_in" ? null : normalizePhone(phone),
-      expires_at: computeExpiry().toISOString(),
-      location_id: locationId,
-    };
+    setError(null);
+    return true;
+  }, [contactMethod, locationId, phone, title]);
 
-    if (isEdit && jobId) {
-      navigation.navigate("Preview", {
-        job: draft,
-        isEdit: true,
-        onConfirm: submitEdit,
-      });
-      return;
+  const checkActiveLimit = useCallback(async (): Promise<boolean> => {
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+
+    if (userError || !user) {
+      setError("You must be signed in.");
+      return false;
     }
 
-    // CREATE or RENEW → Payment required
-    navigation.navigate("Payment", {
-      jobDraft: draft,
-      mode,
-      jobId,
-    });
-  }
+    const { count, error } = await supabase
+      .from("jobs")
+      .select("id", { count: "exact", head: true })
+      .eq("employer_id", user.id)
+      .eq("status", "active");
 
-  /* ================= EDIT SUBMIT ================= */
-  async function submitEdit() {
+    if (error) {
+      setError("Could not verify active jobs.");
+      return false;
+    }
+
+    if ((count ?? 0) >= 10) {
+      setError("You already have 10 active jobs. Close one before posting.");
+      return false;
+    }
+
+    return true;
+  }, []);
+
+  const submitEdit = useCallback(async () => {
     if (!jobId) return;
+    if (!validateBeforeSubmit()) return;
 
     setLoading(true);
+    setError(null);
 
     try {
       const saved = await updateJob(jobId, {
         title: title.trim(),
-        description: description.trim() || null,
+        description: description.trim() || "",
         pay_type: payType,
         contact_method: contactMethod,
         contact_phone:
-          contactMethod === "walk_in" ? null : normalizePhone(phone),
-        expires_at: computeExpiry(),
+          contactMethod === "walk_in" || contactMethod === "in_app"
+            ? null
+            : normalizePhone(phone),
       });
 
       setPostedJob(saved);
     } catch (e: any) {
-      Alert.alert("Error", e.message ?? "Try again.");
+      setError(e?.message ?? "Could not save changes.");
     } finally {
       setLoading(false);
     }
-  }
+  }, [
+    contactMethod,
+    description,
+    jobId,
+    payType,
+    phone,
+    title,
+    validateBeforeSubmit,
+  ]);
+
+  const continueFlow = useCallback(async () => {
+    if (isEdit && jobId) {
+      await submitEdit();
+      return;
+    }
+
+    if (!validateBeforeSubmit()) return;
+
+    const allowed = await checkActiveLimit();
+    if (!allowed) return;
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      const draftPayload = {
+        title: title.trim(),
+        description: description.trim() || "",
+        pay_type: payType,
+        contact_method: contactMethod,
+        contact_phone:
+          contactMethod === "walk_in" || contactMethod === "in_app"
+            ? null
+            : normalizePhone(phone),
+        location_id: locationId,
+      };
+
+      const { data, error } = await supabase
+        .from("jobs")
+        .insert({
+          ...draftPayload,
+          status: "draft",
+        })
+        .select()
+        .single();
+
+      if (error || !data) {
+        throw error ?? new Error("Could not create draft.");
+      }
+
+      navigation.navigate("Payment", {
+        draftId: data.id,
+        mode: "create",
+      });
+    } catch {
+      setError("Could not create draft.");
+    } finally {
+      setLoading(false);
+    }
+  }, [
+    checkActiveLimit,
+    contactMethod,
+    description,
+    isEdit,
+    jobId,
+    locationId,
+    navigation,
+    payType,
+    phone,
+    submitEdit,
+    title,
+    validateBeforeSubmit,
+  ]);
 
   if (postedJob) {
     return (
@@ -160,162 +370,158 @@ export default function PostJobScreen({ navigation, route }: Props) {
   }
 
   return (
-    <View style={styles.container}>
-      <View style={{ padding: 20 }}>
-        <Text style={styles.header}>
-          {isEdit ? "Edit job" : isRenew ? "Renew job" : "Post a job"}
-        </Text>
-
-        {locationName && !isEdit && (
-          <Text style={styles.subtle}>Posting in {locationName}</Text>
-        )}
-
-        {/* Title */}
-        <Text style={styles.label}>Job title</Text>
-        <TextInput value={title} onChangeText={setTitle} style={styles.input} />
-
-        {/* Description */}
-        <Text style={styles.label}>Job description</Text>
-        <TextInput
-          value={description}
-          onChangeText={setDescription}
-          multiline
-          style={[styles.input, { height: 100 }]}
+    <AppScreen scroll>
+      <View style={contentStyle}>
+        <AppHeader
+          title={isEdit ? "Edit Job" : isRenew ? "Renew Job" : "Post a Job"}
+          subtitle={
+            isEdit
+              ? "Update your job details and save changes."
+              : isRenew
+                ? "Review the job and continue to payment."
+                : "Create a draft first, then complete payment before it goes live."
+          }
         />
 
-        {/* Pay Type */}
-        <Text style={styles.label}>Pay type</Text>
-        <Row>
-          {(["daily", "weekly", "monthly"] as const).map((p) => (
-            <Chip key={p} active={payType === p} onPress={() => setPayType(p)}>
-              {p}
-            </Chip>
-          ))}
-        </Row>
+        {locationName && !isEdit ? (
+          <InlineAlert
+            tone="info"
+            title="Posting location"
+            message={`This job will be posted in ${locationName}.`}
+          />
+        ) : null}
 
-        {/* Contact Method */}
-        <Text style={styles.label}>How should people contact you?</Text>
-        <Row>
-          {(["call", "whatsapp", "in_app", "walk_in"] as const).map((m) => (
-            <Chip
-              key={m}
-              active={contactMethod === m}
-              onPress={() => setContactMethod(m)}
-            >
-              {m.replace("_", " ")}
-            </Chip>
-          ))}
-        </Row>
+        {isRenew ? (
+          <InlineAlert
+            tone="warning"
+            title="Renewal mode"
+            message="Job details are locked during renewal. Continue to payment to reactivate the listing."
+          />
+        ) : null}
 
-        {/* Phone */}
-        {contactMethod !== "walk_in" && (
-          <>
-            <Text style={styles.label}>Contact phone</Text>
-            <TextInput
-              value={phone}
-              onChangeText={setPhone}
-              keyboardType="phone-pad"
-              style={styles.input}
+        {!isEdit ? (
+          <InlineAlert
+            tone="info"
+            title="Before your job goes live"
+            message="AwoJobs saves this as a draft first. You will complete payment before publishing."
+          />
+        ) : null}
+
+        {error ? <InlineAlert tone="error" message={error} /> : null}
+
+        <AppCard variant="elevated">
+          <View style={sectionCardStyle}>
+            <AppText variant="titleLg">Job details</AppText>
+
+            <AppInput
+              label="Job title"
+              value={title}
+              onChangeText={(value) => {
+                setTitle(value);
+                if (error) setError(null);
+              }}
+              editable={!fieldDisabled}
+              placeholder="Enter the job title"
+              hint="Use a clear title applicants will immediately understand."
+              error={titleError ?? undefined}
             />
-          </>
-        )}
 
-        <Pressable
-          onPress={goPreview}
+            <AppInput
+              label="Job description"
+              value={description}
+              onChangeText={(value) => {
+                setDescription(value);
+                if (error) setError(null);
+              }}
+              editable={!fieldDisabled}
+              placeholder="Describe the role, duties, and expectations"
+              multiline
+              hint="Keep it clear and practical. Mention what the worker will actually do."
+            />
+          </View>
+        </AppCard>
+
+        <AppCard variant="elevated">
+          <View style={sectionCardStyle}>
+            <AppText variant="titleLg">Pay type</AppText>
+
+            <View style={chipRowStyle}>
+              {(["daily", "weekly", "monthly", "not_specified"] as const).map(
+                (option) => (
+                  <FilterChip
+                    key={option}
+                    label={formatPayTypeLabel(option)}
+                    selected={payType === option}
+                    disabled={fieldDisabled}
+                    onPress={() => {
+                      setPayType(option);
+                      if (error) setError(null);
+                    }}
+                  />
+                ),
+              )}
+            </View>
+          </View>
+        </AppCard>
+
+        <AppCard variant="elevated">
+          <View style={sectionCardStyle}>
+            <AppText variant="titleLg">Application method</AppText>
+
+            <View style={chipRowStyle}>
+              {(["call", "whatsapp", "in_app", "walk_in"] as const).map(
+                (method) => (
+                  <FilterChip
+                    key={method}
+                    label={formatContactMethodLabel(method)}
+                    selected={contactMethod === method}
+                    disabled={fieldDisabled}
+                    onPress={() => {
+                      setContactMethod(method);
+                      if (error) setError(null);
+                    }}
+                  />
+                ),
+              )}
+            </View>
+
+            {contactMethod !== "walk_in" && contactMethod !== "in_app" ? (
+              <AppInput
+                label="Contact phone"
+                value={phone}
+                onChangeText={(value) => {
+                  setPhone(value);
+                  if (error) setError(null);
+                }}
+                editable={!fieldDisabled}
+                keyboardType="phone-pad"
+                placeholder="07XXXXXXXX"
+                hint="Use a valid Uganda phone number."
+                error={phoneError ?? undefined}
+              />
+            ) : (
+              <InlineAlert
+                tone="info"
+                message={
+                  contactMethod === "in_app"
+                    ? "Applicants will submit their details through AwoJobs."
+                    : "Applicants will be expected to visit the employer in person."
+                }
+              />
+            )}
+          </View>
+        </AppCard>
+
+        <AppButton
+          title={isEdit ? "Save Changes" : "Continue to Payment"}
+          onPress={continueFlow}
+          loading={loading}
           disabled={loading}
-          style={[styles.primaryButton, { opacity: loading ? 0.7 : 1 }]}
-        >
-          <Text style={styles.primaryText}>
-            {isEdit ? "Preview changes" : "Preview job"}
-          </Text>
-        </Pressable>
+          variant="primary"
+        />
+
+        <View style={footerSpaceStyle} />
       </View>
-    </View>
-  );
-}
-
-/* ================= STYLES ================= */
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: "#F8F9FB",
-  },
-  header: {
-    fontSize: 20,
-    fontWeight: "800",
-    color: "#0F172A",
-    marginBottom: 6,
-  },
-  subtle: {
-    fontSize: 13,
-    color: "#64748B",
-    marginBottom: 20,
-  },
-  label: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: "#334155",
-    marginBottom: 6,
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-    padding: 14,
-    borderRadius: 14,
-    backgroundColor: "#FFFFFF",
-    marginBottom: 16,
-  },
-  primaryButton: {
-    backgroundColor: "#0F172A",
-    paddingVertical: 14,
-    borderRadius: 16,
-    marginTop: 20,
-  },
-  primaryText: {
-    color: "white",
-    textAlign: "center",
-    fontWeight: "800",
-    fontSize: 15,
-  },
-});
-
-function Row({ children }: any) {
-  return (
-    <View
-      style={{
-        flexDirection: "row",
-        marginBottom: 16,
-      }}
-    >
-      {children}
-    </View>
-  );
-}
-
-function Chip({ children, active, onPress }: any) {
-  return (
-    <Pressable
-      onPress={onPress}
-      style={{
-        paddingVertical: 8,
-        paddingHorizontal: 14,
-        borderRadius: 999,
-        borderWidth: 1,
-        borderColor: active ? "#0F172A" : "#CBD5E1",
-        backgroundColor: active ? "#0F172A" : "transparent",
-        marginRight: 10,
-      }}
-    >
-      <Text
-        style={{
-          fontSize: 13,
-          fontWeight: "700",
-          color: active ? "#FFFFFF" : "#0F172A",
-        }}
-      >
-        {children}
-      </Text>
-    </Pressable>
+    </AppScreen>
   );
 }

@@ -1,6 +1,11 @@
-import React, { useMemo, useState } from "react";
-import { View, Text, Pressable, StyleSheet } from "react-native";
+import React, { useCallback, useMemo, useState } from "react";
+import { Pressable, View, type ViewStyle } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
 import type { JobWithCoords } from "../../jobs/jobs.types";
+
+import { useTheme } from "../../../theme/useTheme";
+import { AppText } from "../../AppText";
+import { StatusBadge } from "../../StatusBadge";
 
 type Props = {
   job: JobWithCoords;
@@ -17,140 +22,109 @@ export default function JobCardHeader({
   applied,
   onToggleSave,
   isSponsored = false,
-  isPremium = false,
 }: Props) {
+  const { theme } = useTheme();
   const [busy, setBusy] = useState(false);
 
-  const sponsorActive = useMemo(() => {
-    if (!isSponsored) return false;
-    if (!job.sponsored_until) return false;
-    return new Date(job.sponsored_until).getTime() > Date.now();
-  }, [isSponsored, job.sponsored_until]);
-
-  async function handleToggleSave() {
+  const handleToggleSave = useCallback(async () => {
     if (busy) return;
+
     setBusy(true);
-    await onToggleSave();
-    setBusy(false);
-  }
+    try {
+      await onToggleSave();
+    } finally {
+      setBusy(false);
+    }
+  }, [busy, onToggleSave]);
+
+  const wrapperStyle = useMemo<ViewStyle>(
+    () => ({
+      gap: theme.spacing.sm,
+    }),
+    [theme.spacing.sm],
+  );
+
+  const topRowStyle = useMemo<ViewStyle>(
+    () => ({
+      flexDirection: "row",
+      alignItems: "flex-start",
+      justifyContent: "space-between",
+      gap: theme.spacing.sm,
+    }),
+    [theme.spacing.sm],
+  );
+
+  const badgeRowStyle = useMemo<ViewStyle>(
+    () => ({
+      flex: 1,
+      flexDirection: "row",
+      alignItems: "center",
+      flexWrap: "wrap",
+      gap: theme.spacing.xs,
+      paddingRight: theme.spacing.sm,
+    }),
+    [theme.spacing.sm, theme.spacing.xs],
+  );
+
+  const saveButtonStyle = useMemo<ViewStyle>(
+    () => ({
+      width: 38,
+      height: 38,
+      borderRadius: theme.radius.pill,
+      alignItems: "center",
+      justifyContent: "center",
+      backgroundColor: theme.colors.bgSurfaceMuted,
+      borderWidth: 1,
+      borderColor: theme.colors.borderDefault,
+    }),
+    [
+      theme.colors.bgSurfaceMuted,
+      theme.colors.borderDefault,
+      theme.radius.pill,
+    ],
+  );
 
   return (
-    <View style={styles.wrapper}>
-      {/* Save Button */}
-      <Pressable
-        onPress={handleToggleSave}
-        disabled={busy}
-        style={({ pressed }) => [
-          styles.saveBtn,
-          busy && { opacity: 0.6 },
-          pressed && { opacity: 0.75 },
-        ]}
-      >
-        <Text style={styles.saveIcon}>{saved ? "⭐" : "☆"}</Text>
-      </Pressable>
+    <View style={wrapperStyle}>
+      <View style={topRowStyle}>
+        <View style={badgeRowStyle}>
+          {isSponsored ? (
+            <StatusBadge label="Sponsored" tone="sponsored" />
+          ) : null}
 
-      {/* Sponsored Badge (Highest Priority) */}
-      {sponsorActive && (
-        <View style={styles.sponsoredBadge}>
-          <Text style={styles.sponsoredText}>🔥 Sponsored</Text>
+          {applied ? <StatusBadge label="Applied" tone="success" /> : null}
         </View>
-      )}
 
-      {/* Premium National Indicator (Subtle) */}
-      {isPremium && !sponsorActive && (
-        <View style={styles.premiumBadge}>
-          <Text style={styles.premiumText}>🌍 National</Text>
-        </View>
-      )}
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={saved ? "Remove saved job" : "Save job"}
+          accessibilityState={{ disabled: busy, selected: saved }}
+          onPress={handleToggleSave}
+          disabled={busy}
+          hitSlop={8}
+          style={({ pressed }) => [
+            saveButtonStyle,
+            busy ? { opacity: 0.65 } : null,
+            pressed && !busy
+              ? {
+                  opacity: 0.92,
+                  backgroundColor: theme.colors.buttonGhostBgPressed,
+                  borderColor: theme.colors.borderStrong,
+                }
+              : null,
+          ]}
+        >
+          <Ionicons
+            name={saved ? "bookmark" : "bookmark-outline"}
+            size={18}
+            color={saved ? theme.colors.warning : theme.colors.textSecondary}
+          />
+        </Pressable>
+      </View>
 
-      {/* Job Title */}
-      <Text style={[styles.title, isPremium && styles.premiumTitle]}>
+      <AppText variant="title" weight="700" numberOfLines={2}>
         {job.title}
-      </Text>
-
-      {/* Applied Badge */}
-      {applied && (
-        <View style={styles.appliedBadge}>
-          <Text style={styles.appliedText}>✓ Applied</Text>
-        </View>
-      )}
+      </AppText>
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  wrapper: {
-    paddingRight: 40,
-  },
-
-  saveBtn: {
-    position: "absolute",
-    top: 0,
-    right: 0,
-    zIndex: 10,
-  },
-
-  saveIcon: {
-    fontSize: 18,
-  },
-
-  /* Sponsored – Strongest */
-  sponsoredBadge: {
-    alignSelf: "flex-start",
-    backgroundColor: "#F59E0B",
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 999,
-    marginBottom: 8,
-  },
-
-  sponsoredText: {
-    fontSize: 11,
-    fontWeight: "900",
-    color: "#FFFFFF",
-  },
-
-  /* Premium – Subtle */
-  premiumBadge: {
-    alignSelf: "flex-start",
-    backgroundColor: "#EEF2FF",
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 999,
-    marginBottom: 8,
-  },
-
-  premiumText: {
-    fontSize: 11,
-    fontWeight: "800",
-    color: "#3730A3",
-  },
-
-  title: {
-    fontSize: 17,
-    fontWeight: "800",
-    color: "#0F172A",
-  },
-
-  premiumTitle: {
-    fontSize: 18,
-    fontWeight: "900",
-  },
-
-  appliedBadge: {
-    alignSelf: "flex-start",
-    backgroundColor: "#DCFCE7",
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 999,
-    marginTop: 6,
-    borderWidth: 1,
-    borderColor: "#22C55E",
-  },
-
-  appliedText: {
-    fontSize: 11,
-    fontWeight: "800",
-    color: "#166534",
-  },
-});

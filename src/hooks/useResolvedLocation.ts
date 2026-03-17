@@ -9,6 +9,30 @@ import { getCachedLocation } from "@location/location.cache";
 
 const CHANGE_COOLDOWN_MS = 8000;
 
+type ResolvedLocationShape = {
+  location_id: string | null;
+  district?: string | null;
+  town?: string | null;
+  sub_county?: string | null;
+};
+
+function formatLocationLabel(
+  location: Pick<
+    ResolvedLocationShape,
+    "district" | "town" | "sub_county"
+  > | null
+): string | null {
+  if (!location) return null;
+
+  const parts = [
+    location.sub_county?.trim(),
+    location.town?.trim(),
+    location.district?.trim(),
+  ].filter(Boolean);
+
+  return parts.length ? parts.join(", ") : null;
+}
+
 export function useResolvedLocation() {
   const [locationId, setLocationId] =
     useState<string | null>(null);
@@ -29,99 +53,69 @@ export function useResolvedLocation() {
   const resolvingRef = useRef(false);
   const mountedRef = useRef(true);
 
-  /* ---------------- INITIAL LOAD ---------------- */
-
   useEffect(() => {
     mountedRef.current = true;
 
     const init = async () => {
-      /* ---------- FAST CACHE PAINT ---------- */
-
       try {
         const cached =
-          await getCachedLocation();
+          (await getCachedLocation()) as ResolvedLocationShape | null;
 
         if (cached && mountedRef.current) {
           currentLocationIdRef.current =
-            cached.location_id;
+            cached.location_id ?? null;
 
-          setLocationId(
-            cached.location_id
-          );
-
-          setLocationLabel(
-            cached.district ?? null
-          );
-
+          setLocationId(cached.location_id ?? null);
+          setLocationLabel(formatLocationLabel(cached));
           setLoading(false);
         }
       } catch {
         // silent
       }
 
-      /* ---------- BACKGROUND RESOLUTION ---------- */
-
       if (resolvingRef.current) return;
-
       resolvingRef.current = true;
 
       try {
         const fresh =
-          await resolveLocation();
+          (await resolveLocation()) as ResolvedLocationShape | null;
 
-        if (
-          !mountedRef.current ||
-          !fresh
-        )
-          return;
+        if (!mountedRef.current || !fresh) return;
 
-        const newId =
-          fresh.location_id;
+        const newId = fresh.location_id ?? null;
+        const newLabel = formatLocationLabel(fresh);
+        const newDistrict = fresh.district ?? null;
 
-        const newDistrict =
-          fresh.district ?? null;
-
-        const oldId =
-          currentLocationIdRef.current;
-
+        const oldId = currentLocationIdRef.current;
         const now = Date.now();
 
         const hasChanged =
-          oldId &&
-          newId &&
+          !!oldId &&
+          !!newId &&
           oldId !== newId;
 
         const cooldownPassed =
           now - lastChangeRef.current >
           CHANGE_COOLDOWN_MS;
 
-        // Prevent redundant state updates
-        if (newId !== oldId) {
-          currentLocationIdRef.current =
-            newId;
-
+        // Never downgrade a valid canonical location_id to null automatically.
+        if (newId && newId !== oldId) {
+          currentLocationIdRef.current = newId;
           setLocationId(newId);
-          setLocationLabel(
-            newDistrict
-          );
         }
 
-        if (
-          hasChanged &&
-          cooldownPassed
-        ) {
-          lastChangeRef.current =
-            now;
+        // Still allow label refresh from fresher data.
+        if (newLabel) {
+          setLocationLabel(newLabel);
+        }
 
-          setBannerDistrictName(
-            newDistrict
-          );
-          setDistrictBannerVisible(
-            true
-          );
+        if (hasChanged && cooldownPassed) {
+          lastChangeRef.current = now;
+          setBannerDistrictName(newDistrict);
+          setDistrictBannerVisible(true);
         }
       } catch {
-        // silent fail — fallback handled elsewhere
+        // silent fail
       } finally {
         resolvingRef.current = false;
 
@@ -137,8 +131,6 @@ export function useResolvedLocation() {
       mountedRef.current = false;
     };
   }, []);
-
-  /* ---------------- STABLE HIDE HANDLER ---------------- */
 
   const hideDistrictBanner =
     useCallback(() => {

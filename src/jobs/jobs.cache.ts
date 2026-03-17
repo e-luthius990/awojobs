@@ -2,40 +2,66 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Job } from "./jobs.types";
 
 const CACHE_VERSION = 1;
+const MAX_CACHE_AGE_MS = 60_000; // 1 minute
 
-const key = (locationId: string) =>
-  `awojobs:jobs:v${CACHE_VERSION}:${locationId}`;
+const key = (
+  locationId: string,
+  scope: "local" | "national"
+) => `awojobs:jobs:v${CACHE_VERSION}:${locationId}:${scope}`;
 
 type CachePayload = {
   version: number;
+  timestamp: number;
   jobs: Job[];
 };
 
-export async function getCachedJobs(locationId: string): Promise<Job[]> {
-  const raw = await AsyncStorage.getItem(key(locationId));
+/* ------------------------------------------------
+   GET CACHE
+------------------------------------------------- */
+export async function getCachedJobs(
+  locationId: string,
+  scope: "local" | "national"
+): Promise<Job[]> {
+  const raw = await AsyncStorage.getItem(
+    key(locationId, scope)
+  );
+
   if (!raw) return [];
 
   try {
     const parsed = JSON.parse(raw) as CachePayload;
 
-    if (parsed.version !== CACHE_VERSION) {
+    if (
+      parsed.version !== CACHE_VERSION ||
+      Date.now() - parsed.timestamp > MAX_CACHE_AGE_MS
+    ) {
       return [];
     }
 
-    return Array.isArray(parsed.jobs) ? parsed.jobs : [];
+    return Array.isArray(parsed.jobs)
+      ? parsed.jobs
+      : [];
   } catch {
     return [];
   }
 }
 
-export async function setCachedJobs(locationId: string, jobs: Job[]) {
+/* ------------------------------------------------
+   SET CACHE
+------------------------------------------------- */
+export async function setCachedJobs(
+  locationId: string,
+  scope: "local" | "national",
+  jobs: Job[]
+) {
   const payload: CachePayload = {
     version: CACHE_VERSION,
-    jobs: jobs.slice(0, 100), // cap cache size
+    timestamp: Date.now(),
+    jobs: jobs.slice(0, 100), // cap size
   };
 
   await AsyncStorage.setItem(
-    key(locationId),
-    JSON.stringify(payload),
+    key(locationId, scope),
+    JSON.stringify(payload)
   );
 }

@@ -1,187 +1,219 @@
-import {
-  useEffect,
-  useRef,
-  useState,
-  useCallback,
-  useMemo,
-} from "react";
-import { supabase } from "../core/supabase";
-import { getDeviceHash } from "../security/device";
-import { ENV } from "../core/config";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { fetchFeedPage, PremiumState } from "../jobs/jobs.service";
+import { JobWithCoords } from "../jobs/jobs.types";
+import { JobsCursor } from "../jobs/jobs.cursor";
 
-type PremiumState = {
-  active: boolean;
-  expires_at: string | null;
-  days_remaining: number;
-  scope: "local" | "national";
-  phone: string | null;
-};
+type Scope = "local" | "national";
 
-type FeedResponse = {
-  premium: PremiumState;
-  jobs: any[];
+type FeedError = string | null;
+
+type FeedPageResult = {
+  jobs: JobWithCoords[];
+  nextCursor: JobsCursor | null;
+  premium?: PremiumState | null;
   new_jobs_count?: number;
 };
 
-const REQUEST_TIMEOUT_MS = 8000;
+function classifyFeedError(err: unknown): string {
+  const message =
+    err instanceof Error
+      ? err.message.toLowerCase()
+      : String(err ?? "").toLowerCase();
 
-export function useEdgeFeed(locationId: string | null) {
-  const [data, setData] = useState<FeedResponse | null>(null);
+  if (
+    message.includes("network") ||
+    message.includes("failed to fetch") ||
+    message.includes("timeout")
+  ) {
+    return "We could not refresh jobs right now. Check your internet connection and try again.";
+  }
+
+  return "We could not load jobs right now. Please try again.";
+}
+
+export function useEdgeFeed(
+  locationId: string | null,
+  requestedScope: Scope = "local",
+) {
+  const [jobs, setJobs] = useState<JobWithCoords[]>([]);
+  const [premium, setPremium] = useState<PremiumState | null>(null);
+  const [cursor, setCursor] = useState<JobsCursor | null>(null);
   const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
+  const [new_jobs_count, setNewJobsCount] = useState<number>(0);
+  const [error, setError] = useState<FeedError>(null);
 
-  const deviceHashRef = useRef<string | null>(null);
-  const abortRef = useRef<AbortController | null>(null);
-  const requestIdRef = useRef(0);
+  const requestVersionRef = useRef(0);
 
-  /* ---------------- INIT DEVICE HASH ---------------- */
+  const requiresLocation = requestedScope === "local";
+  const canFetch = !requiresLocation || Boolean(locationId);
 
-  useEffect(() => {
-    let mounted = true;
+  const resetFeedState = useCallback(
+    (options?: { clearPremium?: boolean }) => {
+      setJobs([]);
+      setCursor(null);
+      setHasMore(false);
+      setNewJobsCount(0);
+      setError(null);
+      setLoading(false);
+      setRefreshing(false);
+      setLoadingMore(false);
 
-    (async () => {
-      const hash = await getDeviceHash().catch(() => null);
-      if (mounted) deviceHashRef.current = hash;
-    })();
+      if (options?.clearPremium) {
+        setPremium(null);
+      }
+    },
+    [],
+  );
 
-    return () => {
-      mounted = false;
-    };
+  const applyPage = useCallback((page: FeedPageResult) => {
+    setJobs(page.jobs);
+    setCursor(page.nextCursor ?? null);
+    setPremium(page.premium ?? null);
+    setHasMore(Boolean(page.nextCursor));
+    setNewJobsCount(page.new_jobs_count ?? 0);
   }, []);
 
-  /* ---------------- CORE FETCH ---------------- */
-
-  const fetchFeed = useCallback(async () => {
-    if (!locationId || !deviceHashRef.current) return;
-
-    const currentRequestId = ++requestIdRef.current;
-
-    abortRef.current?.abort();
-    const controller = new AbortController();
-    abortRef.current = controller;
-
-    setLoading(true);
-
-    try {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-
-      const token = session?.access_token ?? null;
-
-      const timeout = setTimeout(() => {
-        controller.abort();
-      }, REQUEST_TIMEOUT_MS);
-
-      const res = await fetch(
-        `${ENV.SUPABASE_URL}/functions/v1/feed`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...(token && {
-              Authorization: `Bearer ${token}`,
-            }),
-          },
-          body: JSON.stringify({
-            location_id: locationId,
-            device_hash: deviceHashRef.current,
-            limit: 20,
-          }),
-          signal: controller.signal,
-        }
-      );
-
-      clearTimeout(timeout);
-
-      if (!res.ok) {
-        throw new Error("feed_error");
-      }
-
-      const json: FeedResponse = await res.json();
-
-      if (currentRequestId === requestIdRef.current) {
-        setData(json);
-      }
-    } catch {
-      // keep previous state silently
-    } finally {
-      if (currentRequestId === requestIdRef.current) {
-        setLoading(false);
-      }
-    }
-  }, [locationId]);
-
-  /* ---------------- AUTO FETCH ---------------- */
-
-  useEffect(() => {
-    if (!locationId) return;
-    fetchFeed();
-  }, [locationId, fetchFeed]);
-
-  /* ---------------- REALTIME JOB INSERT ---------------- */
-
-  useEffect(() => {
-    if (!locationId) return;
-
-    const channel = supabase
-      .channel(`feed-refresh-${locationId}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "INSERT",
-          schema: "public",
-          table: "jobs",
-        },
-        fetchFeed
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [locationId, fetchFeed]);
-
-  /* ---------------- PREMIUM EXPIRY TIMER ---------------- */
-
-  useEffect(() => {
-    if (!data?.premium?.expires_at) return;
-
-    const expiryTime = new Date(data.premium.expires_at).getTime();
-    const now = Date.now();
-
-    if (expiryTime <= now) {
-      fetchFeed();
+  const loadInitial = useCallback(async () => {
+    if (!canFetch) {
+      resetFeedState({ clearPremium: true });
       return;
     }
 
-    const timeout = setTimeout(() => {
-      fetchFeed(); // auto downgrade to local
-    }, expiryTime - now + 1000);
+    const requestVersion = ++requestVersionRef.current;
 
-    return () => clearTimeout(timeout);
-  }, [data?.premium?.expires_at, fetchFeed]);
+    setLoading(true);
+    setRefreshing(false);
+    setLoadingMore(false);
+    setError(null);
 
-  /* ---------------- STABLE DERIVED ---------------- */
+    try {
+      const page = (await fetchFeedPage({
+        locationId,
+        cursor: null,
+        requestedScope,
+      })) as FeedPageResult;
 
-  const premium = useMemo<PremiumState>(() => {
-    return (
-      data?.premium ?? {
-        active: false,
-        expires_at: null,
-        days_remaining: 0,
-        scope: "local",
-        phone: null,
+      if (requestVersion !== requestVersionRef.current) return;
+
+      applyPage(page);
+    } catch (err) {
+      if (requestVersion !== requestVersionRef.current) return;
+
+      setJobs([]);
+      setCursor(null);
+      setHasMore(false);
+      setNewJobsCount(0);
+      setPremium(null);
+      setError(classifyFeedError(err));
+    } finally {
+      if (requestVersion === requestVersionRef.current) {
+        setLoading(false);
       }
-    );
-  }, [data]);
+    }
+  }, [applyPage, canFetch, locationId, requestedScope, resetFeedState]);
 
-  const jobs = useMemo(() => data?.jobs ?? [], [data]);
+  const refresh = useCallback(async () => {
+    if (!canFetch || loading || refreshing) return;
+
+    const requestVersion = ++requestVersionRef.current;
+
+    setRefreshing(true);
+    setLoadingMore(false);
+    setError(null);
+
+    try {
+      const page = (await fetchFeedPage({
+        locationId,
+        cursor: null,
+        requestedScope,
+      })) as FeedPageResult;
+
+      if (requestVersion !== requestVersionRef.current) return;
+
+      applyPage(page);
+    } catch (err) {
+      if (requestVersion !== requestVersionRef.current) return;
+
+      setError(classifyFeedError(err));
+    } finally {
+      if (requestVersion === requestVersionRef.current) {
+        setRefreshing(false);
+      }
+    }
+  }, [applyPage, canFetch, loading, locationId, refreshing, requestedScope]);
+
+  const loadMore = useCallback(async () => {
+    if (!cursor || loadingMore || loading || refreshing || !canFetch) return;
+
+    const requestVersion = requestVersionRef.current;
+
+    setLoadingMore(true);
+    setError(null);
+
+    try {
+      const page = (await fetchFeedPage({
+        locationId,
+        cursor,
+        requestedScope,
+      })) as FeedPageResult;
+
+      if (requestVersion !== requestVersionRef.current) return;
+
+      setJobs((prev) => {
+        const seen = new Set(prev.map((j) => j.id));
+        const next = page.jobs.filter((j) => !seen.has(j.id));
+        return [...prev, ...next];
+      });
+
+      setCursor(page.nextCursor ?? null);
+      setPremium(page.premium ?? null);
+      setHasMore(Boolean(page.nextCursor));
+    } catch (err) {
+      if (requestVersion !== requestVersionRef.current) return;
+      setError(classifyFeedError(err));
+    } finally {
+      if (requestVersion === requestVersionRef.current) {
+        setLoadingMore(false);
+      }
+    }
+  }, [
+    canFetch,
+    cursor,
+    loading,
+    loadingMore,
+    locationId,
+    refreshing,
+    requestedScope,
+  ]);
+
+  useEffect(() => {
+    if (!canFetch) {
+      resetFeedState({ clearPremium: true });
+      return;
+    }
+
+    setCursor(null);
+    setHasMore(false);
+    setNewJobsCount(0);
+    setError(null);
+    setLoadingMore(false);
+
+    void loadInitial();
+  }, [canFetch, loadInitial, resetFeedState]);
 
   return {
     jobs,
-    premium,
     loading,
-    refresh: fetchFeed,
-    new_jobs_count: data?.new_jobs_count ?? 0,
+    refreshing,
+    loadingMore,
+    hasMore,
+    refresh,
+    loadMore,
+    premium,
+    new_jobs_count,
+    error,
   };
 }

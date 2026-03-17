@@ -1,11 +1,17 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useCallback,
+  type ViewStyle,
+} from "react";
 import {
-  View,
-  Text,
-  Pressable,
   FlatList,
   ActivityIndicator,
-  TextInput,
+  Pressable,
+  View,
+  type ListRenderItem,
 } from "react-native";
 import * as Haptics from "expo-haptics";
 import * as Location from "expo-location";
@@ -18,6 +24,17 @@ import {
   saveCachedLocation,
 } from "../../location/location.cache";
 
+import { useTheme } from "../../theme/useTheme";
+import { AppScreen } from "../../ui/AppScreen";
+import { AppHeader } from "../../ui/AppHeader";
+import { AppText } from "../../ui/AppText";
+import { AppCard } from "../../ui/AppCard";
+import { AppInput } from "../../ui/AppInput";
+import { AppButton } from "../../ui/AppButton";
+import { InlineAlert } from "../../ui/InlineAlert";
+import { EmptyState } from "../../ui/EmptyState";
+import { StatusBadge } from "../../ui/StatusBadge";
+
 type Step = "district" | "town" | "sub_county";
 
 type LocationOption = {
@@ -27,9 +44,6 @@ type LocationOption = {
   sub_county?: string;
 };
 
-/* =====================================================
-   GPS ONLY (READ-ONLY)
-===================================================== */
 async function getGpsCoords() {
   const { status } = await Location.getForegroundPermissionsAsync();
   if (status !== "granted") return null;
@@ -49,7 +63,14 @@ async function getGpsCoords() {
   }
 }
 
+function getStepTitle(step: Step) {
+  if (step === "district") return "Choose district";
+  if (step === "town") return "Choose town";
+  return "Choose sub-county";
+}
+
 export default function ManualLocationScreen({ navigation }: any) {
+  const { theme } = useTheme();
   const listRef = useRef<FlatList<LocationOption>>(null);
 
   const [step, setStep] = useState<Step>("district");
@@ -59,16 +80,96 @@ export default function ManualLocationScreen({ navigation }: any) {
   const [options, setOptions] = useState<LocationOption[]>([]);
   const [loading, setLoading] = useState(false);
   const [query, setQuery] = useState("");
+  const [detecting, setDetecting] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  /* =====================================================
-     AUTO-DETECT NEAREST DISTRICT
-  ====================================================== */
+  const contentStyle = useMemo<ViewStyle>(
+    () => ({
+      gap: theme.spacing.md,
+      paddingHorizontal: theme.spacing.screenX,
+      paddingTop: theme.spacing.screenY,
+      paddingBottom: theme.spacing.xxxl,
+    }),
+    [
+      theme.spacing.md,
+      theme.spacing.screenX,
+      theme.spacing.screenY,
+      theme.spacing.xxxl,
+    ],
+  );
+
+  const searchCardStyle = useMemo<ViewStyle>(
+    () => ({
+      gap: theme.spacing.md,
+    }),
+    [theme.spacing.md],
+  );
+
+  const listContentStyle = useMemo<ViewStyle>(
+    () => ({
+      paddingHorizontal: theme.spacing.screenX,
+      paddingTop: theme.spacing.screenY,
+      paddingBottom: theme.spacing.xxxl,
+    }),
+    [theme.spacing.screenX, theme.spacing.screenY, theme.spacing.xxxl],
+  );
+
+  const rowCardStyle = useMemo<ViewStyle>(
+    () => ({
+      marginBottom: theme.spacing.sm,
+    }),
+    [theme.spacing.sm],
+  );
+
+  const rowInnerStyle = useMemo<ViewStyle>(
+    () => ({
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: theme.spacing.sm,
+    }),
+    [theme.spacing.sm],
+  );
+
+  const alphaRailStyle = useMemo<ViewStyle>(
+    () => ({
+      position: "absolute",
+      right: 4,
+      top: 180,
+      bottom: 96,
+      justifyContent: "center",
+      gap: 1,
+    }),
+    [],
+  );
+
+  const alphaItemStyle = useMemo<ViewStyle>(
+    () => ({
+      minWidth: 22,
+      minHeight: 18,
+      alignItems: "center",
+      justifyContent: "center",
+    }),
+    [],
+  );
+
+  const loaderWrapStyle = useMemo<ViewStyle>(
+    () => ({
+      paddingTop: theme.spacing.xl,
+      alignItems: "center",
+      gap: theme.spacing.sm,
+    }),
+    [theme.spacing.sm, theme.spacing.xl],
+  );
+
   useEffect(() => {
-    autoDetectDistrict();
+    void autoDetectDistrict();
   }, []);
 
-  async function autoDetectDistrict() {
+  const autoDetectDistrict = useCallback(async () => {
     try {
+      setDetecting(true);
+
       const coords = await getGpsCoords();
       if (!coords) return;
 
@@ -85,18 +186,19 @@ export default function ManualLocationScreen({ navigation }: any) {
       }
     } catch {
       // silent fallback
+    } finally {
+      setDetecting(false);
     }
-  }
+  }, []);
 
-  /* =====================================================
-     LOAD OPTIONS (CACHE → RPC)
-  ====================================================== */
   useEffect(() => {
-    let mounted = true;
+    let active = true;
 
     async function loadOptions() {
-      if (!mounted) return;
+      if (!active) return;
+
       setLoading(true);
+      setError(null);
 
       const cacheKey =
         step === "district"
@@ -105,56 +207,60 @@ export default function ManualLocationScreen({ navigation }: any) {
             ? `towns:${district}`
             : `subcounties:${district}:${town}`;
 
-      const cached = await getCachedList<LocationOption[]>(cacheKey);
-      if (cached && mounted) {
-        setOptions(cached);
-        setLoading(false);
-        return;
-      }
-
       try {
+        const cached = await getCachedList<LocationOption>(cacheKey);
+
+        if (cached && active) {
+          setOptions(cached);
+          setLoading(false);
+          return;
+        }
+
         let data: LocationOption[] = [];
 
         if (step === "district") {
-          const { data: d } = await supabase.rpc("get_districts");
+          const { data: d, error } = await supabase.rpc("get_districts");
+          if (error) throw error;
           data = d ?? [];
         }
 
         if (step === "town" && district) {
-          const { data: d } = await supabase.rpc("get_towns", {
+          const { data: d, error } = await supabase.rpc("get_towns", {
             p_district: district,
           });
+          if (error) throw error;
           data = d ?? [];
         }
 
         if (step === "sub_county" && district && town) {
-          const { data: d } = await supabase.rpc("get_sub_counties", {
+          const { data: d, error } = await supabase.rpc("get_sub_counties", {
             p_district: district,
             p_town: town,
           });
+          if (error) throw error;
           data = d ?? [];
         }
 
-        if (mounted) {
-          setOptions(data);
-          await setCachedList(cacheKey, data);
-        }
+        if (!active) return;
+
+        setOptions(data);
+        await setCachedList(cacheKey, data);
       } catch {
-        if (mounted) setOptions([]);
+        if (!active) return;
+        setOptions([]);
+        setError("Could not load location options.");
       } finally {
-        if (mounted) setLoading(false);
+        if (active) setLoading(false);
       }
     }
 
-    loadOptions();
+    void loadOptions();
+
     return () => {
-      mounted = false;
+      active = false;
     };
   }, [step, district, town]);
 
-  /* =====================================================
-     SEARCH FILTER
-  ====================================================== */
   const filtered = useMemo(() => {
     if (!query.trim()) return options;
     const q = query.toLowerCase();
@@ -164,14 +270,12 @@ export default function ManualLocationScreen({ navigation }: any) {
     );
   }, [query, options]);
 
-  /* =====================================================
-     A–Z INDEX (DISTRICTS ONLY)
-  ====================================================== */
   const alphaIndex = useMemo(() => {
-    if (step !== "district") return {};
+    if (step !== "district") return {} as Record<string, number>;
+
     const map: Record<string, number> = {};
 
-    options.forEach((o, i) => {
+    filtered.forEach((o, i) => {
       const letter = o.district?.[0]?.toUpperCase();
       if (letter && map[letter] === undefined) {
         map[letter] = i;
@@ -179,60 +283,70 @@ export default function ManualLocationScreen({ navigation }: any) {
     });
 
     return map;
-  }, [options, step]);
+  }, [filtered, step]);
 
-  /* =====================================================
-     SELECT
-  ====================================================== */
-  async function select(item: LocationOption) {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  const breadcrumb = useMemo(() => {
+    if (step === "district") return "Start by choosing your district.";
+    if (step === "town") return `District: ${district ?? "Unknown"}`;
+    return `${district ?? "Unknown"} • ${town ?? "Unknown"}`;
+  }, [district, step, town]);
 
-    if (step === "district") {
-      setDistrict(item.district ?? null);
-      setQuery("");
-      setStep("town");
-      return;
-    }
+  const itemLabel = useCallback(
+    (item: LocationOption) =>
+      item.district || item.town || item.sub_county || "",
+    [],
+  );
 
-    if (step === "town") {
-      setTown(item.town ?? null);
-      setQuery("");
-      setStep("sub_county");
-      return;
-    }
+  const select = useCallback(
+    async (item: LocationOption) => {
+      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
-    if (!item?.id || !district || !town || !item.sub_county) return;
+      if (step === "district") {
+        setDistrict(item.district ?? null);
+        setTown(null);
+        setQuery("");
+        setStep("town");
+        return;
+      }
 
-    await setManualLocation(item.id);
+      if (step === "town") {
+        setTown(item.town ?? null);
+        setQuery("");
+        setStep("sub_county");
+        return;
+      }
 
-    await saveCachedLocation({
-      location_id: item.id,
-      district,
-      town,
-      sub_county: item.sub_county,
-      source: "manual",
-      resolved_at: Date.now(),
-    });
+      if (!item?.id || !district || !town || !item.sub_county) return;
 
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      await setManualLocation({
+        location_id: item.id,
+        district,
+        town,
+        sub_county: item.sub_county,
+      });
 
-    navigation.reset({
-      index: 0,
-      routes: [
-        {
-          name: "App",
-          state: {
-            routes: [{ name: "FeedTab" }],
-          },
-        },
-      ],
-    });
-  }
+      await saveCachedLocation({
+        location_id: item.id,
+        district,
+        town,
+        sub_county: item.sub_county,
+        source: "manual",
+        lat: null,
+        lng: null,
+        resolved_at: Date.now(),
+      });
 
-  /* =====================================================
-     BACK
-  ====================================================== */
-  function goBack() {
+      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+
+      navigation.reset({
+        index: 0,
+        routes: [{ name: "App" }],
+      });
+    },
+    [district, navigation, step, town],
+  );
+
+  const goBack = useCallback(() => {
     if (step === "sub_county") {
       setStep("town");
       return;
@@ -240,102 +354,163 @@ export default function ManualLocationScreen({ navigation }: any) {
 
     if (step === "town") {
       setTown(null);
+      setDistrict(null);
       setStep("district");
       return;
     }
 
     navigation.goBack();
-  }
+  }, [navigation, step]);
 
-  /* =====================================================
-     UI
-  ====================================================== */
+  const renderItem: ListRenderItem<LocationOption> = useCallback(
+    ({ item }) => (
+      <Pressable onPress={() => void select(item)} style={rowCardStyle}>
+        <AppCard variant="default">
+          <View style={rowInnerStyle}>
+            <View style={{ flex: 1 }}>
+              <AppText variant="title">{itemLabel(item)}</AppText>
+              <AppText variant="caption" tone="secondary">
+                {step === "district"
+                  ? "District"
+                  : step === "town"
+                    ? (district ?? "Town")
+                    : `${district ?? ""}${town ? ` • ${town}` : ""}`}
+              </AppText>
+            </View>
+
+            <AppText variant="labelLg" tone="primary" weight="700">
+              Select
+            </AppText>
+          </View>
+        </AppCard>
+      </Pressable>
+    ),
+    [district, itemLabel, rowCardStyle, rowInnerStyle, select, step, town],
+  );
+
+  const showAlphaRail = step === "district" && filtered.length > 0 && !loading;
+
   return (
-    <View style={{ flex: 1, backgroundColor: "#F8F9FB" }}>
-      <View style={{ padding: 20 }}>
-        <Pressable onPress={goBack} style={{ marginBottom: 10 }}>
-          <Text style={{ fontWeight: "700" }}>← Back</Text>
-        </Pressable>
-
-        <Text style={{ fontSize: 20, fontWeight: "800" }}>
-          Choose your location
-        </Text>
-
-        <Text style={{ fontSize: 13, color: "#64748B", marginTop: 4 }}>
-          {step === "district" && "Search your district"}
-          {step === "town" && `District: ${district}`}
-          {step === "sub_county" && `${district} • ${town}`}
-        </Text>
-
-        <TextInput
-          value={query}
-          onChangeText={setQuery}
-          placeholder="Search…"
-          style={{
-            marginTop: 14,
-            padding: 12,
-            borderRadius: 10,
-            backgroundColor: "#FFFFFF",
-            borderWidth: 1,
-            borderColor: "#E5E7EB",
-          }}
-        />
-      </View>
-
-      {loading ? (
-        <ActivityIndicator style={{ marginTop: 40 }} />
-      ) : (
+    <AppScreen padded={false} keyboardAvoiding={false}>
+      <View style={{ flex: 1 }}>
         <FlatList
           ref={listRef}
           data={filtered}
           keyExtractor={(item, i) => item.id ?? `${step}-${i}`}
-          contentContainerStyle={{ paddingHorizontal: 20 }}
-          renderItem={({ item }) => (
-            <Pressable
-              onPress={() => select(item)}
-              style={{
-                paddingVertical: 14,
-                borderBottomWidth: 1,
-                borderColor: "#E5E7EB",
-              }}
-            >
-              <Text style={{ fontWeight: "700" }}>
-                {item.district || item.town || item.sub_county}
-              </Text>
-            </Pressable>
-          )}
-        />
-      )}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          contentContainerStyle={listContentStyle}
+          ListHeaderComponent={
+            <View style={contentStyle}>
+              <AppHeader
+                title="Choose Location"
+                subtitle="Select the area you want AwoJobs to use for your local feed."
+                onBackPress={goBack}
+              />
 
-      {step === "district" && (
-        <View
-          style={{
-            position: "absolute",
-            right: 6,
-            top: 140,
-            bottom: 80,
-            justifyContent: "center",
-          }}
-        >
-          {"ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("").map((l) => (
-            <Pressable
-              key={l}
-              onPress={() => {
-                const idx = alphaIndex[l];
-                if (idx !== undefined) {
-                  listRef.current?.scrollToIndex({
-                    index: idx,
-                    animated: true,
-                  });
-                }
-              }}
-              style={{ paddingVertical: 2 }}
-            >
-              <Text style={{ fontSize: 11, color: "#64748B" }}>{l}</Text>
-            </Pressable>
-          ))}
-        </View>
-      )}
-    </View>
+              <View style={{ gap: theme.spacing.xs }}>
+                <StatusBadge
+                  label={getStepTitle(step)}
+                  tone={step === "sub_county" ? "success" : "info"}
+                />
+                <AppText variant="bodySm" tone="secondary">
+                  {breadcrumb}
+                </AppText>
+              </View>
+
+              {detecting && step !== "district" ? (
+                <InlineAlert
+                  tone="info"
+                  title="Location detected"
+                  message="We detected your district to help you move faster. You can still change it."
+                />
+              ) : null}
+
+              {error ? <InlineAlert tone="error" message={error} /> : null}
+
+              <AppCard variant="elevated">
+                <View style={searchCardStyle}>
+                  <AppInput
+                    label={
+                      step === "district"
+                        ? "Search district"
+                        : step === "town"
+                          ? "Search town"
+                          : "Search sub-county"
+                    }
+                    value={query}
+                    onChangeText={setQuery}
+                    placeholder="Search..."
+                  />
+
+                  {step !== "district" ? (
+                    <AppButton
+                      title={
+                        step === "town" ? "Change District" : "Back to Towns"
+                      }
+                      onPress={() => {
+                        if (step === "town") {
+                          setTown(null);
+                          setDistrict(null);
+                          setStep("district");
+                        } else {
+                          setStep("town");
+                        }
+                      }}
+                      variant="secondary"
+                    />
+                  ) : null}
+                </View>
+              </AppCard>
+
+              {loading ? (
+                <View style={loaderWrapStyle}>
+                  <ActivityIndicator color={theme.colors.primary} />
+                  <AppText variant="bodySm" tone="secondary">
+                    Loading options...
+                  </AppText>
+                </View>
+              ) : null}
+
+              {!loading && filtered.length === 0 ? (
+                <EmptyState
+                  title="No results found"
+                  message={
+                    query.trim()
+                      ? "Try a different search term."
+                      : "No location options are available right now."
+                  }
+                />
+              ) : null}
+            </View>
+          }
+          renderItem={renderItem}
+        />
+
+        {showAlphaRail ? (
+          <View style={alphaRailStyle} pointerEvents="box-none">
+            {"ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("").map((letter) => (
+              <Pressable
+                key={letter}
+                onPress={() => {
+                  const idx = alphaIndex[letter];
+                  if (idx !== undefined) {
+                    listRef.current?.scrollToIndex({
+                      index: idx,
+                      animated: true,
+                    });
+                  }
+                }}
+                style={alphaItemStyle}
+              >
+                <AppText variant="caption" tone="tertiary">
+                  {letter}
+                </AppText>
+              </Pressable>
+            ))}
+          </View>
+        ) : null}
+      </View>
+    </AppScreen>
   );
 }

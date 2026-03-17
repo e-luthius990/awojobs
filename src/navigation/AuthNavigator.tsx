@@ -1,16 +1,31 @@
 // src/navigation/AuthNavigator.tsx
 
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
-import { useMemo } from "react";
 
 import LoginScreen from "../screens/auth/LoginScreen";
 import RegisterScreen from "../screens/auth/RegisterScreen";
 import ForgotPasswordScreen from "../screens/auth/ForgotPasswordScreen";
 import ResetCodeScreen from "../screens/auth/ResetCodeScreen";
+import VerifyOtpScreen from "../screens/auth/VerifyOtpScreen";
+
+export type AuthRole = "employer" | "job_seeker";
+export type AuthIntent = "premium_upgrade" | undefined;
 
 export type AuthStackParamList = {
   Login: undefined;
-  Register: { role?: "employer" | "job_seeker" } | undefined;
+  Register:
+    | {
+        role?: AuthRole;
+        forcedRole?: AuthRole;
+        intent?: AuthIntent;
+      }
+    | undefined;
+  VerifyOtp: {
+    phone: string;
+    password: string;
+    role: AuthRole;
+    intent?: AuthIntent;
+  };
   ForgotPassword: undefined;
   ResetCode: { phone: string };
 };
@@ -18,26 +33,54 @@ export type AuthStackParamList = {
 const Stack = createNativeStackNavigator<AuthStackParamList>();
 
 export function AuthNavigator() {
-  const screenOptions = useMemo(
-    () => ({
-      headerShown: false,
-      animation: "slide_from_right",
-      animationDuration: 200,
-      gestureEnabled: true,
-    }),
-    [],
-  );
-
   return (
     <Stack.Navigator
       initialRouteName="Login"
-      screenOptions={screenOptions}
-      detachInactiveScreens
+      screenOptions={{
+        headerShown: false,
+        gestureEnabled: true,
+      }}
     >
-      <Stack.Screen name="Login" component={LoginScreen} />
-      <Stack.Screen name="Register" component={RegisterScreen} />
-      <Stack.Screen name="ForgotPassword" component={ForgotPasswordScreen} />
-      <Stack.Screen name="ResetCode" component={ResetCodeScreen} />
+      <Stack.Screen
+        name="Login"
+        component={LoginScreen}
+        options={{
+          animation: "fade",
+        }}
+      />
+
+      <Stack.Screen
+        name="Register"
+        component={RegisterScreen}
+        options={{
+          animation: "slide_from_right",
+        }}
+      />
+
+      <Stack.Screen
+        name="VerifyOtp"
+        component={VerifyOtpScreen}
+        options={{
+          animation: "slide_from_right",
+          gestureEnabled: false,
+        }}
+      />
+
+      <Stack.Screen
+        name="ForgotPassword"
+        component={ForgotPasswordScreen}
+        options={{
+          animation: "slide_from_right",
+        }}
+      />
+
+      <Stack.Screen
+        name="ResetCode"
+        component={ResetCodeScreen}
+        options={{
+          animation: "slide_from_right",
+        }}
+      />
     </Stack.Navigator>
   );
 }

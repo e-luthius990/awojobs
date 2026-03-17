@@ -1,18 +1,22 @@
 // src/navigation/PostJobNavigator.ts
 
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
-import { useMemo } from "react";
 
 import PostJobScreen from "../screens/post/PostJobScreen";
 import JobPreviewScreen from "../screens/post/JobPreviewScreen";
 import PaymentScreen from "../screens/payment/PaymentScreen";
 import PaymentPendingScreen from "../screens/payment/PaymentPendingScreen";
+import SponsorPaymentScreen from "../screens/payment/SponsorPaymentScreen";
+
+/* =====================================================
+   STACK PARAM TYPES
+===================================================== */
 
 export type PostJobStackParamList = {
   PostJob: undefined;
 
   Preview: {
-    draftId: string; // local draft reference (NOT full object)
+    draftId: string;
     isEdit: boolean;
   };
 
@@ -22,58 +26,70 @@ export type PostJobStackParamList = {
     jobId?: string;
   };
 
+  SponsorPayment: {
+    jobId: string;
+  };
+
   PaymentPending: {
     jobId: string;
+    flow?: "job_post" | "sponsor_upgrade";
+    intentId?: string | null;
   };
 };
 
 const Stack = createNativeStackNavigator<PostJobStackParamList>();
 
-export function PostJobNavigator() {
-  const screenOptions = useMemo(
-    () => ({
-      headerBackTitleVisible: false,
-      animation: "slide_from_right",
-      animationDuration: 200,
-    }),
-    [],
-  );
+/* =====================================================
+   NAVIGATOR
+===================================================== */
 
+export function PostJobNavigator() {
   return (
     <Stack.Navigator
       initialRouteName="PostJob"
-      screenOptions={screenOptions}
-      detachInactiveScreens
+      screenOptions={{
+        headerShown: false,
+        gestureEnabled: true,
+      }}
     >
-      {/* 📝 CREATE JOB */}
       <Stack.Screen
         name="PostJob"
         component={PostJobScreen}
-        options={{ title: "Post Job" }}
+        options={{
+          animation: "slide_from_right",
+        }}
       />
 
-      {/* 👀 PREVIEW */}
       <Stack.Screen
         name="Preview"
         component={JobPreviewScreen}
-        options={{ title: "Preview Job" }}
+        options={{
+          animation: "slide_from_right",
+        }}
       />
 
-      {/* 💳 PAYMENT */}
       <Stack.Screen
         name="Payment"
         component={PaymentScreen}
-        options={{ title: "Payment" }}
+        options={{
+          animation: "slide_from_right",
+        }}
       />
 
-      {/* ⏳ PAYMENT PENDING */}
+      <Stack.Screen
+        name="SponsorPayment"
+        component={SponsorPaymentScreen}
+        options={{
+          animation: "slide_from_right",
+        }}
+      />
+
       <Stack.Screen
         name="PaymentPending"
         component={PaymentPendingScreen}
         options={{
-          title: "Processing payment",
+          animation: "fade",
           gestureEnabled: false,
-          headerBackVisible: false,
         }}
       />
     </Stack.Navigator>

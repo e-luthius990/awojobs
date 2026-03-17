@@ -1,358 +1,430 @@
-import React, { useCallback, useEffect, useState } from "react";
-import {
-  View,
-  Text,
-  Pressable,
-  ActivityIndicator,
-  Alert,
-  ScrollView,
-  RefreshControl,
-} from "react-native";
-
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { RefreshControl, ScrollView, View, type ViewStyle } from "react-native";
+import { useFocusEffect } from "@react-navigation/native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { supabase } from "../../core/supabase";
 import { useSession } from "../../state/useSession";
 
+import { useTheme } from "../../theme/useTheme";
+import { AppScreen } from "../../ui/AppScreen";
+import { AppText } from "../../ui/AppText";
+import { AppCard } from "../../ui/AppCard";
+import { AppButton } from "../../ui/AppButton";
+import { EmptyState } from "../../ui/EmptyState";
+import { InlineAlert } from "../../ui/InlineAlert";
+import { StatusBadge } from "../../ui/StatusBadge";
+import { SkeletonCard } from "../../ui/Skeleton";
+import { AppEntrance } from "../../ui/AppEntrance";
+
+/* ================= TYPES ================= */
+
+type RecentJob = {
+  id: string;
+  title: string;
+  status: string;
+  views: number;
+  expires_in_days: number | null;
+};
+
+type DashboardData = {
+  active_jobs: number;
+  pending_jobs: number;
+  expired_jobs: number;
+  new_applications: number;
+  recent_jobs: RecentJob[];
+};
+
+/* ================= HELPERS ================= */
+
+function getJobStatusTone(
+  status: string,
+): React.ComponentProps<typeof StatusBadge>["tone"] {
+  if (status === "active") return "success";
+  if (status === "pending_payment" || status === "pending") return "warning";
+  if (status === "expired" || status === "closed") return "default";
+  return "default";
+}
+
+function formatJobStatus(status: string) {
+  if (status === "pending_payment") return "Pending Payment";
+  return status.charAt(0).toUpperCase() + status.slice(1);
+}
+
+/* ================= COMPONENTS ================= */
+
+function QuickStat({ label, value }: { label: string; value: number }) {
+  return (
+    <AppCard variant="elevated" padding="lg" style={{ flex: 1 }}>
+      <View style={{ gap: 4 }}>
+        <AppText variant="caption" tone="secondary" uppercase>
+          {label}
+        </AppText>
+        <AppText variant="h2">{value}</AppText>
+      </View>
+    </AppCard>
+  );
+}
+
+/* ================= SCREEN ================= */
+
 export default function EmployerDashboardScreen({ navigation }: any) {
   const { session } = useSession();
+  const { theme } = useTheme();
 
-  const [summary, setSummary] = useState<any>(null);
-  const [employerPhone, setEmployerPhone] = useState<string | null>(null);
-
+  const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  function formatUgPhone(phone?: string | null) {
-    if (!phone) return "";
-    const digits = phone.replace(/\D/g, "");
-    if (digits.startsWith("256") && digits.length === 12) {
-      return `+${digits.slice(0, 3)} ${digits.slice(3, 6)} ${digits.slice(
-        6,
-        9,
-      )} ${digits.slice(9)}`;
-    }
-    return phone;
-  }
+  const userId = session?.user?.id;
+  const cacheKey = `employer_dashboard_cache_${userId}`;
 
   const loadDashboard = useCallback(async () => {
-    if (!session?.user?.id) return;
+    if (!userId) {
+      setData(null);
+      setError("Dashboard unavailable.");
+      setLoading(false);
+      setRefreshing(false);
+      return;
+    }
 
     try {
-      const { data, error } = await supabase.rpc("employer_dashboard_summary", {
-        p_employer_id: session.user.id,
-      });
+      setError(null);
 
-      if (error) throw error;
-      setSummary(data);
+      const { data: rpcData, error: rpcError } = await supabase.rpc(
+        "employer_dashboard_summary",
+        {
+          p_employer_id: userId,
+        },
+      );
 
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("phone_number")
-        .eq("id", session.user.id)
-        .single();
+      if (rpcError || !rpcData) {
+        throw rpcError ?? new Error("Dashboard unavailable.");
+      }
 
-      setEmployerPhone(profile?.phone_number ?? null);
-    } catch (err) {
-      console.error(err);
-      Alert.alert("Error loading dashboard");
+      setData(rpcData);
+      await AsyncStorage.setItem(cacheKey, JSON.stringify(rpcData));
+    } catch {
+      if (!data) {
+        setError("We could not load your employer dashboard right now.");
+      }
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [session?.user?.id]);
+  }, [cacheKey, data, userId]);
 
   useEffect(() => {
-    loadDashboard();
-  }, [loadDashboard]);
+    if (!userId) return;
+
+    const loadCache = async () => {
+      try {
+        const cached = await AsyncStorage.getItem(cacheKey);
+        if (!cached) return;
+
+        const parsed = JSON.parse(cached) as DashboardData;
+        setData(parsed);
+        setLoading(false);
+      } catch {
+        // ignore bad cache
+      }
+    };
+
+    void loadCache();
+  }, [cacheKey, userId]);
+
+  useFocusEffect(
+    useCallback(() => {
+      void loadDashboard();
+    }, [loadDashboard]),
+  );
+
+  useEffect(() => {
+    if (!userId) return;
+
+    const channel = supabase
+      .channel(`dashboard-app-updates-${userId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "applications",
+          filter: `employer_id=eq.${userId}`,
+        },
+        () => {
+          void loadDashboard();
+        },
+      )
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [userId, loadDashboard]);
+
+  const contentStyle = useMemo<ViewStyle>(
+    () => ({
+      gap: theme.spacing.lg,
+      paddingBottom: theme.spacing.xxxl,
+      paddingHorizontal: theme.spacing.screenX,
+      paddingTop: theme.spacing.md,
+    }),
+    [
+      theme.spacing.lg,
+      theme.spacing.md,
+      theme.spacing.screenX,
+      theme.spacing.xxxl,
+    ],
+  );
+
+  const heroWrapStyle = useMemo<ViewStyle>(
+    () => ({ gap: theme.spacing.sm }),
+    [theme.spacing.sm],
+  );
+
+  const actionRowStyle = useMemo<ViewStyle>(
+    () => ({ gap: theme.spacing.sm }),
+    [theme.spacing.sm],
+  );
+
+  const statsRowStyle = useMemo<ViewStyle>(
+    () => ({
+      flexDirection: "row",
+      gap: theme.spacing.sm,
+    }),
+    [theme.spacing.sm],
+  );
+
+  const recentJobsWrapStyle = useMemo<ViewStyle>(
+    () => ({ gap: theme.spacing.sm }),
+    [theme.spacing.sm],
+  );
+
+  const sectionHeaderStyle = useMemo<ViewStyle>(() => ({ gap: 4 }), []);
+
+  const jobCardContentStyle = useMemo<ViewStyle>(
+    () => ({ gap: theme.spacing.sm }),
+    [theme.spacing.sm],
+  );
+
+  const jobTopRowStyle = useMemo<ViewStyle>(
+    () => ({
+      flexDirection: "row",
+      alignItems: "flex-start",
+      justifyContent: "space-between",
+      gap: theme.spacing.sm,
+    }),
+    [theme.spacing.sm],
+  );
+
+  const loaderWrapStyle = useMemo<ViewStyle>(
+    () => ({ gap: theme.spacing.md }),
+    [theme.spacing.md],
+  );
 
   if (loading) {
     return (
-      <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
-        <ActivityIndicator />
-        <Text style={{ marginTop: 8, color: "#64748B" }}>
-          Loading dashboard…
-        </Text>
-      </View>
+      <AppScreen scroll>
+        <View style={loaderWrapStyle}>
+          <SkeletonCard lines={3} />
+          <SkeletonCard lines={3} />
+          <SkeletonCard lines={3} />
+        </View>
+      </AppScreen>
     );
   }
 
-  if (!summary) return null;
+  if (!data && error) {
+    return (
+      <AppScreen centerContent>
+        <EmptyState
+          title="Dashboard unavailable"
+          message={error}
+          action={
+            <AppButton
+              title="Retry"
+              onPress={() => {
+                setLoading(true);
+                void loadDashboard();
+              }}
+              variant="primary"
+            />
+          }
+        />
+      </AppScreen>
+    );
+  }
+
+  if (!data) {
+    return (
+      <AppScreen centerContent>
+        <EmptyState
+          title="Dashboard unavailable"
+          message="We could not load your employer dashboard right now."
+          action={
+            <AppButton
+              title="Retry"
+              onPress={() => {
+                setLoading(true);
+                void loadDashboard();
+              }}
+              variant="primary"
+            />
+          }
+        />
+      </AppScreen>
+    );
+  }
+
+  const showBundlePrompt = data.expired_jobs >= 2 || data.active_jobs >= 3;
 
   return (
-    <ScrollView
-      style={{ flex: 1, backgroundColor: "#F1F5F9" }}
-      contentContainerStyle={{ padding: 20 }}
-      refreshControl={
-        <RefreshControl
-          refreshing={refreshing}
-          onRefresh={() => {
-            setRefreshing(true);
-            loadDashboard();
-          }}
-        />
-      }
-    >
-      {/* =======================================================
-         HEADER CARD
-      ======================================================= */}
-      <View style={headerCard}>
-        <View style={{ flexDirection: "row", alignItems: "center" }}>
-          <Text style={phoneHeader}>{formatUgPhone(employerPhone)}</Text>
+    <AppScreen padded={false} keyboardAvoiding={false}>
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={contentStyle}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => {
+              setRefreshing(true);
+              void loadDashboard();
+            }}
+            tintColor={theme.colors.primary}
+          />
+        }
+      >
+        <AppEntrance delay={0}>
+          <AppCard variant="elevated" padding="lg">
+            <View style={heroWrapStyle}>
+              <StatusBadge label="Overview" tone="info" />
+              <AppText variant="h3">Welcome back</AppText>
+              <AppText variant="bodySm" tone="secondary">
+                Here’s what’s happening with your jobs and applicants today.
+              </AppText>
+            </View>
+          </AppCard>
+        </AppEntrance>
 
-          <View style={verifiedBadge}>
-            <Text style={verifiedText}>Verified</Text>
+        <AppEntrance delay={40}>
+          <View style={actionRowStyle}>
+            <AppButton
+              title="Post Job"
+              onPress={() => navigation.navigate("PostJobFlow")}
+              variant="primary"
+            />
+
+            <AppButton
+              title="Applications"
+              onPress={() => navigation.navigate("ApplicationsInbox")}
+              variant="secondary"
+            />
           </View>
+        </AppEntrance>
+
+        <AppEntrance delay={80}>
+          <View style={statsRowStyle}>
+            <QuickStat label="Active" value={data.active_jobs} />
+            <QuickStat label="Pending" value={data.pending_jobs} />
+            <QuickStat label="Expired" value={data.expired_jobs} />
+          </View>
+        </AppEntrance>
+
+        {data.new_applications > 0 ? (
+          <InlineAlert
+            tone="success"
+            title={`${data.new_applications} new application${data.new_applications > 1 ? "s" : ""}`}
+            message="Review your latest candidates and respond quickly."
+            action={
+              <AppButton
+                title="Open Inbox"
+                onPress={() => navigation.navigate("ApplicationsInbox")}
+                variant="secondary"
+              />
+            }
+          />
+        ) : null}
+
+        {error ? <InlineAlert tone="warning" message={error} /> : null}
+
+        {showBundlePrompt ? (
+          <AppCard variant="premium" padding="lg">
+            <View style={{ gap: 10 }}>
+              <StatusBadge label="Save More" tone="premium" />
+              <AppText variant="titleLg">Save more on job posts</AppText>
+              <AppText variant="bodySm" tone="secondary">
+                Post multiple jobs and reduce repeated payment friction with
+                bundle plans.
+              </AppText>
+            </View>
+          </AppCard>
+        ) : null}
+
+        <View style={recentJobsWrapStyle}>
+          <View style={sectionHeaderStyle}>
+            <AppText variant="titleLg">Recent Jobs</AppText>
+            <AppText variant="bodySm" tone="secondary">
+              Review status, expiry, and performance for your latest posts.
+            </AppText>
+          </View>
+
+          {data.recent_jobs?.length === 0 ? (
+            <EmptyState
+              title="No jobs yet"
+              message="Post your first job to start receiving applications."
+            />
+          ) : null}
         </View>
 
-        <Text style={subHeader}>Employer Account</Text>
-      </View>
+        {data.recent_jobs?.map((job) => (
+          <AppCard key={job.id} variant="elevated" padding="lg">
+            <View style={jobCardContentStyle}>
+              <View style={jobTopRowStyle}>
+                <View style={{ flex: 1, gap: 4 }}>
+                  <AppText variant="title" numberOfLines={2}>
+                    {job.title}
+                  </AppText>
+                  <AppText variant="caption" tone="secondary">
+                    {job.views} view{job.views !== 1 ? "s" : ""}
+                  </AppText>
+                </View>
 
-      {/* =======================================================
-         PERFORMANCE SECTION
-      ======================================================= */}
-      <Text style={sectionTitle}>Performance</Text>
+                <StatusBadge
+                  label={formatJobStatus(job.status)}
+                  tone={getJobStatusTone(job.status)}
+                />
+              </View>
 
-      <View style={statsGrid}>
-        <MiniStat label="Total Jobs" value={summary.total_jobs} />
-        <MiniStat label="Active" value={summary.active_jobs} />
-        <MiniStat label="Expired" value={summary.expired_jobs} />
-        <MiniStat label="Sponsored" value={summary.sponsored_jobs} highlight />
-      </View>
+              {job.status === "active" && job.expires_in_days !== null ? (
+                <AppText
+                  variant="bodySm"
+                  tone={job.expires_in_days <= 3 ? "error" : "secondary"}
+                >
+                  Expires in {job.expires_in_days} day
+                  {job.expires_in_days !== 1 ? "s" : ""}
+                </AppText>
+              ) : null}
 
-      <View style={{ marginTop: 12 }}>
-        <LargeStat
-          label="Applications (30 days)"
-          value={summary.applications_30d}
-        />
-      </View>
-
-      {/* =======================================================
-         ACTIONS SECTION
-      ======================================================= */}
-      <Text style={sectionTitle}>Actions</Text>
-
-      <PrimaryButton
-        label="Post a new job"
-        onPress={() => navigation.navigate("PostJobFlow")}
-      />
-
-      {/* ✅ NEW: Manage Jobs entry */}
-      <SecondaryButton
-        label="Manage jobs"
-        onPress={() => navigation.navigate("MyJobs")}
-      />
-
-      <SecondaryButton
-        label="Applications inbox"
-        disabled={summary.applications_30d === 0}
-        onPress={() => navigation.navigate("ApplicationsInbox")}
-      />
-
-      {/* =======================================================
-         INSIGHTS SECTION
-      ======================================================= */}
-      <Text style={sectionTitle}>Insights</Text>
-
-      <CardButton
-        label="Employer Insights"
-        onPress={() => navigation.navigate("EmployerInsights")}
-      />
-
-      <CardButton
-        label="Sponsored Performance"
-        onPress={() => navigation.navigate("SponsoredInsights")}
-      />
-
-      <CardButton
-        label="Trust & Risk"
-        onPress={() => navigation.navigate("EmployerTrust")}
-      />
-    </ScrollView>
+              {job.status === "expired" ? (
+                <AppButton
+                  title="Renew"
+                  onPress={() =>
+                    navigation.navigate("PostJobFlow", {
+                      screen: "Payment",
+                      params: {
+                        draftId: job.id,
+                        mode: "renew",
+                      },
+                    })
+                  }
+                  variant="secondary"
+                />
+              ) : null}
+            </View>
+          </AppCard>
+        ))}
+      </ScrollView>
+    </AppScreen>
   );
 }
-
-/* =======================================================
-   COMPONENTS
-======================================================= */
-
-function MiniStat({ label, value, highlight }: any) {
-  return (
-    <View style={[miniCard, highlight && miniHighlight]}>
-      <Text style={miniLabel}>{label}</Text>
-      <Text style={miniValue}>{value}</Text>
-    </View>
-  );
-}
-
-function LargeStat({ label, value }: any) {
-  return (
-    <View style={largeCard}>
-      <Text style={miniLabel}>{label}</Text>
-      <Text style={largeValue}>{value}</Text>
-    </View>
-  );
-}
-
-function PrimaryButton({ label, onPress }: any) {
-  return (
-    <Pressable onPress={onPress} style={primaryBtn}>
-      <Text style={primaryText}>{label}</Text>
-    </Pressable>
-  );
-}
-
-function SecondaryButton({ label, onPress, disabled }: any) {
-  return (
-    <Pressable
-      disabled={disabled}
-      onPress={onPress}
-      style={[secondaryBtn, disabled && { opacity: 0.4 }]}
-    >
-      <Text style={secondaryText}>{label}</Text>
-    </Pressable>
-  );
-}
-
-function CardButton({ label, onPress }: any) {
-  return (
-    <Pressable onPress={onPress} style={cardBtn}>
-      <Text style={{ fontWeight: "600" }}>{label}</Text>
-    </Pressable>
-  );
-}
-
-/* =======================================================
-   STYLES
-======================================================= */
-
-const headerCard = {
-  backgroundColor: "#0F172A",
-  padding: 20,
-  borderRadius: 20,
-  marginBottom: 20,
-};
-
-const phoneHeader = {
-  fontSize: 20,
-  fontWeight: "800" as const,
-  color: "#FFFFFF",
-};
-
-const subHeader = {
-  fontSize: 13,
-  color: "#CBD5E1",
-  marginTop: 6,
-};
-
-const verifiedBadge = {
-  backgroundColor: "rgba(34, 197, 94, 0.16)",
-  paddingHorizontal: 10,
-  paddingVertical: 5,
-  borderRadius: 999,
-  marginLeft: 10,
-  borderWidth: 1,
-  borderColor: "rgba(34, 197, 94, 0.35)",
-};
-
-const verifiedText = {
-  fontSize: 11,
-  fontWeight: "800" as const,
-  color: "#86EFAC",
-};
-
-const sectionTitle = {
-  fontSize: 14,
-  fontWeight: "700" as const,
-  color: "#475569",
-  marginBottom: 12,
-  marginTop: 16,
-};
-
-const statsGrid = {
-  flexDirection: "row" as const,
-  flexWrap: "wrap" as const,
-  justifyContent: "space-between" as const,
-};
-
-const miniCard = {
-  backgroundColor: "#FFFFFF",
-  width: "48%" as const,
-  padding: 16,
-  borderRadius: 16,
-  marginBottom: 12,
-  shadowColor: "#000",
-  shadowOpacity: 0.05,
-  shadowRadius: 10,
-  shadowOffset: { width: 0, height: 6 },
-  elevation: 2,
-};
-
-const miniHighlight = {
-  borderWidth: 1,
-  borderColor: "#22C55E",
-};
-
-const miniLabel = {
-  fontSize: 12,
-  color: "#64748B",
-};
-
-const miniValue = {
-  fontSize: 20,
-  fontWeight: "800" as const,
-  marginTop: 4,
-};
-
-const largeCard = {
-  backgroundColor: "#FFFFFF",
-  padding: 20,
-  borderRadius: 20,
-  marginTop: 0,
-  shadowColor: "#000",
-  shadowOpacity: 0.05,
-  shadowRadius: 10,
-  shadowOffset: { width: 0, height: 6 },
-  elevation: 2,
-};
-
-const largeValue = {
-  fontSize: 28,
-  fontWeight: "800" as const,
-  marginTop: 6,
-};
-
-const primaryBtn = {
-  backgroundColor: "#0F172A",
-  paddingVertical: 16,
-  borderRadius: 16,
-  alignItems: "center" as const,
-  marginBottom: 12,
-};
-
-const primaryText = {
-  color: "#FFFFFF",
-  fontWeight: "700" as const,
-};
-
-const secondaryBtn = {
-  backgroundColor: "#E2E8F0",
-  paddingVertical: 14,
-  borderRadius: 16,
-  alignItems: "center" as const,
-  marginBottom: 12,
-};
-
-const secondaryText = {
-  fontWeight: "600" as const,
-};
-
-const cardBtn = {
-  backgroundColor: "#FFFFFF",
-  padding: 18,
-  borderRadius: 18,
-  marginBottom: 12,
-  shadowColor: "#000",
-  shadowOpacity: 0.04,
-  shadowRadius: 10,
-  shadowOffset: { width: 0, height: 6 },
-  elevation: 2,
-};

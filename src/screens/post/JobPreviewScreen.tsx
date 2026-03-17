@@ -2,30 +2,33 @@ import React from "react";
 import { View, Text, Pressable } from "react-native";
 
 type ContactMethod = "call" | "whatsapp" | "walk_in" | "in_app";
-type PayType = "daily" | "weekly" | "monthly";
+type PayType = "daily" | "weekly" | "monthly" | "not_specified";
+
+type PreviewJob = {
+  title: string;
+  description?: string | null;
+  pay_type: PayType;
+  contact_method: ContactMethod;
+  contact_phone?: string | null;
+  location_id: string;
+  locationName?: string | null;
+};
+
+function formatPayType(payType: PayType) {
+  return payType === "not_specified" ? "Not specified" : payType;
+}
 
 export default function JobPreviewScreen({ route, navigation }: any) {
-  const { job, mode, jobId } = route.params as {
-    job: {
-      title: string;
-      description?: string | null;
-      pay_type: PayType;
-      contact_method: ContactMethod;
-      contact_phone?: string | null;
-      expires_at: string;
-      location_id: string;
-      locationName?: string;
-    };
+  const { job, mode, jobId, draftId } = route.params as {
+    job: PreviewJob;
     mode: "create" | "edit" | "renew";
     jobId?: string;
+    draftId?: string;
   };
 
   const isEdit = mode === "edit";
   const isRenew = mode === "renew";
 
-  /* ======================================================
-     ACTION LABEL
-  ====================================================== */
   const actionLabel =
     job.contact_method === "walk_in"
       ? "Walk in"
@@ -35,33 +38,35 @@ export default function JobPreviewScreen({ route, navigation }: any) {
           ? "Chat on WhatsApp"
           : "Apply in app";
 
-  /* ======================================================
-     CONTINUE
-  ====================================================== */
   function handleContinue() {
     if (isEdit && jobId) {
-      navigation.navigate("PostJobFlow", {
-        screen: "PostJob",
-        params: {
-          job,
-          jobId,
-          mode: "edit_confirm",
-        },
+      navigation.navigate("PostJob", {
+        job,
+        jobId,
+        mode: "edit",
       });
       return;
     }
 
-    // CREATE or RENEW → go to payment
-    navigation.navigate("Payment", {
-      jobDraft: job,
-      mode,
-      jobId,
-    });
+    if (isRenew && jobId) {
+      navigation.navigate("Payment", {
+        draftId: jobId,
+        mode: "renew",
+      });
+      return;
+    }
+
+    if (draftId) {
+      navigation.navigate("Payment", {
+        draftId,
+        mode: "create",
+      });
+      return;
+    }
+
+    navigation.goBack();
   }
 
-  /* ======================================================
-     UI
-  ====================================================== */
   return (
     <View style={{ flex: 1, backgroundColor: "#F8F9FB" }}>
       <View style={{ padding: 20 }}>
@@ -70,16 +75,15 @@ export default function JobPreviewScreen({ route, navigation }: any) {
         </Text>
 
         <Text style={{ fontSize: 13, color: "#64748B", marginBottom: 16 }}>
-          This is exactly how people in your area will see your job.
+          This is how people in your selected location will see your job.
         </Text>
 
-        {job.locationName && (
+        {job.locationName ? (
           <Text style={{ fontSize: 13, color: "#64748B", marginBottom: 14 }}>
             Posting in {job.locationName}
           </Text>
-        )}
+        ) : null}
 
-        {/* PREVIEW CARD */}
         <View
           style={{
             backgroundColor: "#FFFFFF",
@@ -101,7 +105,10 @@ export default function JobPreviewScreen({ route, navigation }: any) {
           ) : null}
 
           <Text style={{ fontSize: 14, marginBottom: 4 }}>
-            Pay: <Text style={{ fontWeight: "700" }}>{job.pay_type}</Text>
+            Pay:{" "}
+            <Text style={{ fontWeight: "700" }}>
+              {formatPayType(job.pay_type)}
+            </Text>
           </Text>
 
           <Text style={{ fontSize: 13, marginBottom: 6 }}>
@@ -113,10 +120,9 @@ export default function JobPreviewScreen({ route, navigation }: any) {
           </Text>
 
           <Text style={{ fontSize: 12, color: "#64748B", marginBottom: 14 }}>
-            Expires on {new Date(job.expires_at).toLocaleDateString()}
+            Expiry starts after payment activation
           </Text>
 
-          {/* CTA MOCK */}
           <View
             style={{
               alignSelf: "flex-start",
@@ -151,7 +157,6 @@ export default function JobPreviewScreen({ route, navigation }: any) {
           </View>
         </View>
 
-        {/* TRUST NOTICE */}
         <View
           style={{
             backgroundColor: "#FFFFFF",
@@ -163,12 +168,11 @@ export default function JobPreviewScreen({ route, navigation }: any) {
           }}
         >
           <Text style={{ fontSize: 13, color: "#475569", lineHeight: 18 }}>
-            This job will appear in your selected location.{" "}
-            {!isEdit && "Payment is required before it goes live."}
+            This job will be matched using its canonical selected location.
+            {!isEdit && " Payment is required before it goes live."}
           </Text>
         </View>
 
-        {/* CONTINUE */}
         <Pressable
           onPress={handleContinue}
           style={{
@@ -186,7 +190,7 @@ export default function JobPreviewScreen({ route, navigation }: any) {
               fontSize: 16,
             }}
           >
-            {isEdit ? "Save changes" : "Continue"}
+            {isEdit ? "Back to edit" : "Continue"}
           </Text>
         </Pressable>
 

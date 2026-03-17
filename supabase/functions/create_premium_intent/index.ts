@@ -12,13 +12,6 @@ function json(body: unknown, status = 200) {
   });
 }
 
-function getIp(req: Request): string | null {
-  return req.headers
-    .get("x-forwarded-for")
-    ?.split(",")[0]
-    ?.trim() ?? null;
-}
-
 /* --------------------------------------------------
    Edge Entry
 -------------------------------------------------- */
@@ -43,7 +36,6 @@ serve(async (req) => {
     );
 
     const token = authHeader.replace("Bearer ", "").trim();
-
     const { data: authRes } = await service.auth.getUser(token);
     const user = authRes?.user;
 
@@ -59,10 +51,14 @@ serve(async (req) => {
       return json({ error: "Invalid payload" }, 400);
     }
 
-    const { purpose, device_hash } = body;
+    const { days, idempotency_key } = body;
 
-    if (!purpose || typeof purpose !== "string") {
-      return json({ error: "Invalid purpose" }, 400);
+    if (!days || ![7, 30, 90].includes(days)) {
+      return json({ error: "Invalid premium duration" }, 400);
+    }
+
+    if (!idempotency_key || idempotency_key.length < 20) {
+      return json({ error: "Invalid idempotency key" }, 400);
     }
 
     /* ---------------- RPC CALL ---------------- */
@@ -71,9 +67,8 @@ serve(async (req) => {
       "create_premium_payment_intent",
       {
         p_user_id: user.id,
-        p_purpose: purpose,
-        p_ip: getIp(req),
-        p_device_hash: device_hash ?? null,
+        p_days: days,
+        p_idempotency_key: idempotency_key,
       }
     );
 

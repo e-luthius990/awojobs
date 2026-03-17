@@ -42,7 +42,7 @@ serve(async (req) => {
       return json({ error: "Missing provider_ref" }, 400);
     }
 
-    /* ---------------- RPC ---------------- */
+    /* ---------------- DB Update ---------------- */
 
     const service = createClient(
       Deno.env.get("SUPABASE_URL")!,
@@ -50,22 +50,32 @@ serve(async (req) => {
       { auth: { persistSession: false } }
     );
 
-    const { data, error } = await service.rpc(
-      "confirm_premium_payment",
-      {
-        p_provider_ref: provider_ref,
-      }
-    );
+    const { data, error } = await service
+      .from("payments")
+      .update({
+        status: "confirmed",
+        confirmed_at: new Date().toISOString(),
+      })
+      .eq("provider_ref", provider_ref)
+      .eq("status", "initiated")
+      .eq("consumed", false)
+      .select("id")
+      .maybeSingle();
 
     if (error) {
-      console.error("[confirm_premium_payment RPC]", error);
-      return json({ error: "Payment processing failed" }, 400);
+      console.error("[payments update error]", error);
+      return json({ error: "Payment update failed" }, 400);
+    }
+
+    if (!data) {
+      // idempotent safe return
+      return json({ ok: true });
     }
 
     return json({ ok: true });
 
   } catch (err) {
-    console.error("[confirm_premium_payment]", err);
+    console.error("[payment_webhook]", err);
     return json({ error: "Server error" }, 500);
   }
 });

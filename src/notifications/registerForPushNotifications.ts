@@ -1,61 +1,68 @@
+// src/notifications/registerForPushNotifications.ts
+
 import * as Notifications from "expo-notifications";
 import * as Device from "expo-device";
 import { Platform } from "react-native";
 import Constants from "expo-constants";
 import { supabase } from "../core/supabase";
-import { ENV } from "../core/config";
-import { getDeviceHash } from "../security/device";
 
-export async function registerForPushNotifications(
-  locationId?: string
-) {
-  if (!Device.isDevice) return;
+/* =====================================================
+   REGISTER DEVICE PUSH TOKEN (DIRECT RLS UPSERT)
+===================================================== */
 
-  const projectId =
-    Constants.expoConfig?.extra?.eas?.projectId ??
-    Constants.easConfig?.projectId;
+export async function registerForPushNotifications() {
+  try {
+    if (!Device.isDevice) return;
 
-  if (!projectId) return;
+    const projectId =
+      Constants.expoConfig?.extra?.eas?.projectId ??
+      Constants.easConfig?.projectId;
 
-  const { status } = await Notifications.getPermissionsAsync();
+    if (!projectId) return;
 
-  if (status !== "granted") {
-    const req = await Notifications.requestPermissionsAsync();
-    if (req.status !== "granted") return;
-  }
+    const { status } = await Notifications.getPermissionsAsync();
 
-  const pushTokenResponse =
-    await Notifications.getExpoPushTokenAsync({ projectId });
-
-  const token = pushTokenResponse?.data;
-  if (!token) return;
-
-  const device_hash = await getDeviceHash().catch(() => null);
-
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
-
-  if (!session?.access_token) return;
-
-  const res = await fetch(
-    `${ENV.SUPABASE_URL}/functions/v1/register_device_push`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${session.access_token}`,
-      },
-      body: JSON.stringify({
-        expo_push_token: token,
-        location_id: locationId ?? null,
-        platform: Platform.OS,
-        device_hash,
-      }),
+    if (status !== "granted") {
+      const req = await Notifications.requestPermissionsAsync();
+      if (req.status !== "granted") return;
     }
-  );
 
-  if (!res.ok && __DEV__) {
-    console.warn("[Push Edge] register_device_push failed");
+    const pushTokenResponse =
+      await Notifications.getExpoPushTokenAsync({ projectId });
+
+    const token = pushTokenResponse?.data;
+    if (!token) return;
+
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+
+    if (!session?.user?.id) return;
+
+    // Get authoritative location from profile
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("location_id")
+      .eq("id", session.user.id)
+      .single();
+
+    if (!profile?.location_id) return;
+
+    await supabase
+      .from("device_push_tokens")
+      .upsert(
+        {
+          expo_push_token: token,
+          user_id: session.user.id,
+          location_id: profile.location_id,
+          push_opt_in: true,
+        },
+        { onConflict: "expo_push_token" }
+      );
+
+  } catch (err) {
+    if (__DEV__) {
+      console.warn("[Push] registration failed");
+    }
   }
 }

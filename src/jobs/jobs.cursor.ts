@@ -1,5 +1,6 @@
-
 export type JobsCursor = {
+  is_currently_sponsored: boolean;
+  sponsored_until: string | null;
   created_at: string;
   id: string;
 };
@@ -9,29 +10,29 @@ export type JobsCursor = {
 ---------------------------------------------- */
 export function encodeCursor(cursor: JobsCursor): string {
   const json = JSON.stringify(cursor);
-
-  return globalThis.btoa(
-    unescape(encodeURIComponent(json))
-  );
+  return globalThis.btoa(json);
 }
 
 /* ---------------------------------------------
    DECODE (FAIL CLOSED)
 ---------------------------------------------- */
-export function decodeCursor(cursor?: string | null): JobsCursor | null {
+export function decodeCursor(
+  cursor?: string | null
+): JobsCursor | null {
   if (!cursor || typeof cursor !== "string") {
     return null;
   }
 
   try {
-    const json = decodeURIComponent(
-      escape(globalThis.atob(cursor))
-    );
-
-    const parsed = JSON.parse(json);
+    const parsed = JSON.parse(globalThis.atob(cursor));
 
     if (
       typeof parsed !== "object" ||
+      typeof parsed.is_currently_sponsored !== "boolean" ||
+      !(
+        parsed.sponsored_until === null ||
+        typeof parsed.sponsored_until === "string"
+      ) ||
       typeof parsed.created_at !== "string" ||
       typeof parsed.id !== "string"
     ) {
@@ -39,6 +40,8 @@ export function decodeCursor(cursor?: string | null): JobsCursor | null {
     }
 
     return {
+      is_currently_sponsored: parsed.is_currently_sponsored,
+      sponsored_until: parsed.sponsored_until,
       created_at: parsed.created_at,
       id: parsed.id,
     };
@@ -46,4 +49,3 @@ export function decodeCursor(cursor?: string | null): JobsCursor | null {
     return null;
   }
 }
-

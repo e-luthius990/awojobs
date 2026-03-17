@@ -25,13 +25,14 @@ export async function fetchMyJobs(): Promise<Job[]> {
       employer_id,
       contact_method,
       contact_phone,
+      status,
       is_sponsored,
       sponsored_until,
       expires_at,
       created_at,
+      views_count,
       applications_count
     `)
-    .eq("employer_id", user.id)
     .order("created_at", { ascending: false });
 
   if (error) {
@@ -45,16 +46,8 @@ export async function fetchMyJobs(): Promise<Job[]> {
 /* ---------------------------------------------
    DELETE JOB (RLS OWNERSHIP ENFORCED)
 ---------------------------------------------- */
+
 export async function deleteJob(jobId: string) {
-  const {
-    data: { user },
-    error: authErr,
-  } = await supabase.auth.getUser();
-
-  if (authErr || !user?.id) {
-    throw new Error("Not authenticated");
-  }
-
   const { data, error } = await supabase
     .from("jobs")
     .delete()
@@ -62,9 +55,13 @@ export async function deleteJob(jobId: string) {
     .select("id")
     .maybeSingle();
 
-  if (error) throw error;
+  if (error) {
+    throw error;
+  }
 
   if (!data) {
     throw new Error("Job not found or permission denied");
   }
+
+  return true;
 }

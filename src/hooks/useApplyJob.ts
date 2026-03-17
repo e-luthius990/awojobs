@@ -1,90 +1,62 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Alert } from "react-native";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-
+import { supabase } from "@core/supabase";
 import type { JobWithCoords } from "@jobs/jobs.types";
-import { supabaseAnon } from "@core/supabaseAnon";
 import { useAppliedJobs } from "./useAppliedJobs";
-import { getDeviceHash } from "../security/device";
-import { normalizeUgPhone } from "@utils/normalizeUgPhone";
 
 export function useApplyJob(job: JobWithCoords) {
-  const [applyOpen, setApplyOpen] = useState(false);
-  const [name, setName] = useState("");
-  const [phoneInput, setPhoneInput] = useState("");
   const [submitting, setSubmitting] = useState(false);
-
   const { applied, markApplied } = useAppliedJobs(job.id);
 
-  useEffect(() => {
-    AsyncStorage.getItem("applicant_profile").then((data) => {
-      if (!data) return;
-      try {
-        const parsed = JSON.parse(data);
-        setName(parsed.name ?? "");
-        setPhoneInput(parsed.phone ?? "");
-      } catch {}
-    });
-  }, []);
-
   async function submitApplication() {
-    const trimmedName = name.trim();
-
-    if (!trimmedName || !phoneInput.trim()) {
-      Alert.alert("Missing details", "Please enter your name and phone number.");
-      return;
-    }
-
-    const normalizedPhone = normalizeUgPhone(phoneInput);
-
-    if (!normalizedPhone) {
-      Alert.alert(
-        "Invalid number",
-        "Please enter a valid Uganda mobile number (07XXXXXXXX)."
-      );
-      return;
-    }
-
-    setSubmitting(true);
-
     try {
-      const deviceHash = await getDeviceHash();
+      setSubmitting(true);
 
-      const { error } = await supabaseAnon.rpc(
-        "submit_application_secure",
-        {
-          p_job_id: job.id,
-          p_name: trimmedName,
-          p_phone: normalizedPhone,
-          p_device_hash: deviceHash,
-        }
-      );
+      const {
+        data: { user },
+        error: authError,
+      } = await supabase.auth.getUser();
+
+      if (authError || !user) {
+        Alert.alert(
+          "Login required",
+          "You must be logged in to apply for jobs."
+        );
+        return;
+      }
+
+      const { error } = await supabase
+        .from("applications")
+        .insert({
+          job_id: job.id,
+          user_id: user.id, // will be enforced by trigger anyway
+          source: "in_app",
+        });
 
       if (error) {
-        if (error.message === "rate_limit_exceeded") {
+        // Duplicate protection (unique index)
+        if (error.code === "23505") {
           Alert.alert(
-            "Slow down",
-            "You have submitted too many applications. Please wait."
+            "Already applied",
+            "You have already applied for this job."
           );
+          await markApplied(job.id);
           return;
         }
 
-        if (error.message === "job_not_available") {
+        if (error.message?.includes("Job not active")) {
           Alert.alert(
             "Job unavailable",
             "This job is no longer accepting applications."
           );
-          setApplyOpen(false);
           return;
         }
 
-        if (error.code === "23505") {
+        if (error.message?.includes("Only job seekers")) {
           Alert.alert(
-            "Already applied",
-            "You already applied for this job."
+            "Not allowed",
+            "Only job seekers can apply for jobs."
           );
-          await markApplied(job.id);
-          setApplyOpen(false);
           return;
         }
 
@@ -93,23 +65,14 @@ export function useApplyJob(job: JobWithCoords) {
 
       await markApplied(job.id);
 
-      await AsyncStorage.setItem(
-        "applicant_profile",
-        JSON.stringify({
-          name: trimmedName,
-          phone: normalizedPhone,
-        })
-      );
-
-      setApplyOpen(false);
-
       Alert.alert(
         "Application sent",
-        "The employer will contact you directly."
+        "The employer will contact you if shortlisted."
       );
-    } catch {
+    } catch (err) {
+      console.error("Apply error", err);
       Alert.alert(
-        "Failed to apply",
+        "Application failed",
         "Something went wrong. Please try again."
       );
     } finally {
@@ -118,14 +81,8 @@ export function useApplyJob(job: JobWithCoords) {
   }
 
   return {
-    applyOpen,
-    setApplyOpen,
     applied,
     submitting,
-    name,
-    setName,
-    phoneInput,
-    setPhoneInput,
     submitApplication,
   };
 }

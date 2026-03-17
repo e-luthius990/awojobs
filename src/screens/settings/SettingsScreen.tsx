@@ -5,10 +5,10 @@ import Constants from "expo-constants";
 
 import { supabase } from "../../core/supabase";
 import { useSession } from "../../state/useSession";
-import { signOut, deleteAccount } from "../../auth/auth.service";
+
 import { openWhatsAppSupport } from "../../support/whatsapp";
 import { getCachedLocation } from "../../location/location.cache";
-
+import { logout, deleteAccount } from "../../auth/auth.service";
 export default function SettingsScreen({ navigation }: any) {
   const { session } = useSession();
 
@@ -100,8 +100,22 @@ export default function SettingsScreen({ navigation }: any) {
   ====================================================== */
 
   async function logout() {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    await signOut();
+    try {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+
+      Alert.alert("Log out", "Are you sure?", [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Log out",
+          style: "destructive",
+          onPress: async () => {
+            await logout();
+          },
+        },
+      ]);
+    } catch (err: any) {
+      Alert.alert("Logout failed", err.message);
+    }
   }
 
   async function confirmDeleteAccount() {

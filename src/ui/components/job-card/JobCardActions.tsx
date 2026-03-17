@@ -1,8 +1,13 @@
-import React, { useState, useMemo } from "react";
-import { View, Text, Pressable, Alert } from "react-native";
+import React, { useCallback, useMemo, useState } from "react";
+import { Alert, View, type ViewStyle } from "react-native";
 import * as Linking from "expo-linking";
 import type { JobWithCoords } from "../../jobs/jobs.types";
 import { normalizeUgPhone } from "@utils/normalizeUgPhone";
+
+import { useTheme } from "../../../theme/useTheme";
+import { AppButton } from "../../AppButton";
+import { AppText } from "../../AppText";
+import { StatusBadge } from "../../StatusBadge";
 
 type Props = {
   job: JobWithCoords;
@@ -10,56 +15,127 @@ type Props = {
   onApply: () => void;
 };
 
+function parseExpiry(value: string | null | undefined): number | null {
+  if (!value) return null;
+  const timestamp = new Date(value).getTime();
+  return Number.isNaN(timestamp) ? null : timestamp;
+}
+
 export default function JobCardActions({ job, applied, onApply }: Props) {
+  const { theme } = useTheme();
   const [busy, setBusy] = useState(false);
 
-  const expired = useMemo(
-    () => new Date(job.expires_at).getTime() < Date.now(),
+  const expiryTimestamp = useMemo(
+    () => parseExpiry(job.expires_at),
     [job.expires_at],
   );
 
-  const phoneRaw = job.contact_phone
-    ? normalizeUgPhone(job.contact_phone)
-    : null;
+  const expired = useMemo(() => {
+    if (expiryTimestamp === null) return true;
+    return expiryTimestamp < Date.now();
+  }, [expiryTimestamp]);
 
-  const phoneNoPlus = phoneRaw?.replace("+", "");
+  const phoneRaw = useMemo(() => {
+    return job.contact_phone ? normalizeUgPhone(job.contact_phone) : null;
+  }, [job.contact_phone]);
+
+  const phoneNoPlus = useMemo(() => {
+    return phoneRaw ? phoneRaw.replace("+", "") : null;
+  }, [phoneRaw]);
 
   const showCall = job.contact_method === "call" && !expired;
-
   const showWhatsApp = job.contact_method === "whatsapp" && !expired;
-
   const showApply = job.contact_method === "in_app" && !expired;
 
-  async function safeOpen(url: string) {
-    try {
-      const supported = await Linking.canOpenURL(url);
-      if (!supported) {
-        Alert.alert("App not available");
-        return;
-      }
-      await Linking.openURL(url);
-    } catch {
-      Alert.alert("Action failed");
-    }
-  }
+  const containerStyle = useMemo<ViewStyle>(
+    () => ({
+      gap: theme.spacing.sm,
+    }),
+    [theme.spacing.sm],
+  );
 
-  async function callEmployer() {
+  const rowStyle = useMemo<ViewStyle>(
+    () => ({
+      flexDirection: "row",
+      alignItems: "center",
+      flexWrap: "wrap",
+      gap: theme.spacing.sm,
+    }),
+    [theme.spacing.sm],
+  );
+
+  const expiredWrapStyle = useMemo<ViewStyle>(
+    () => ({
+      marginTop: theme.spacing.xs,
+    }),
+    [theme.spacing.xs],
+  );
+
+  const appliedWrapStyle = useMemo<ViewStyle>(
+    () => ({
+      minHeight: 40,
+      paddingHorizontal: theme.spacing.md,
+      borderRadius: theme.radius.pill,
+      backgroundColor: theme.colors.successSoft,
+      borderWidth: 1,
+      borderColor: theme.colors.verifiedBorder,
+      alignItems: "center",
+      justifyContent: "center",
+    }),
+    [
+      theme.colors.successSoft,
+      theme.colors.verifiedBorder,
+      theme.radius.pill,
+      theme.spacing.md,
+    ],
+  );
+
+  const safeOpen = useCallback(
+    async (url: string, unavailableMessage: string) => {
+      try {
+        const supported = await Linking.canOpenURL(url);
+
+        if (!supported) {
+          Alert.alert("Unavailable", unavailableMessage);
+          return;
+        }
+
+        await Linking.openURL(url);
+      } catch {
+        Alert.alert("Action failed", "Please try again.");
+      }
+    },
+    [],
+  );
+
+  const callEmployer = useCallback(async () => {
     if (!phoneRaw) {
-      Alert.alert("Phone number not available");
+      Alert.alert(
+        "Phone number unavailable",
+        "This job does not have a callable number.",
+      );
       return;
     }
 
     if (busy) return;
     setBusy(true);
 
-    await safeOpen(`tel:${phoneRaw}`);
+    try {
+      await safeOpen(
+        `tel:${phoneRaw}`,
+        "Calling is not available on this device.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }, [busy, phoneRaw, safeOpen]);
 
-    setBusy(false);
-  }
-
-  async function whatsappEmployer() {
+  const whatsappEmployer = useCallback(async () => {
     if (!phoneNoPlus) {
-      Alert.alert("WhatsApp number not available");
+      Alert.alert(
+        "WhatsApp unavailable",
+        "This job does not have a valid WhatsApp number.",
+      );
       return;
     }
 
@@ -70,124 +146,69 @@ export default function JobCardActions({ job, applied, onApply }: Props) {
       `Hello, I saw your "${job.title}" job on AwoJobs and I’m interested.`,
     );
 
-    await safeOpen(`https://wa.me/${phoneNoPlus}?text=${msg}`);
-
-    setBusy(false);
-  }
+    try {
+      await safeOpen(
+        `https://wa.me/${phoneNoPlus}?text=${msg}`,
+        "WhatsApp is not available on this device.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }, [busy, job.title, phoneNoPlus, safeOpen]);
 
   if (expired) {
     return (
-      <View
-        style={{
-          marginTop: 14,
-          paddingVertical: 10,
-          paddingHorizontal: 16,
-          borderRadius: 999,
-          backgroundColor: "#FEE2E2",
-        }}
-      >
-        <Text
-          style={{
-            color: "#991B1B",
-            fontWeight: "700",
-          }}
-        >
-          Job expired
-        </Text>
+      <View style={expiredWrapStyle}>
+        <StatusBadge label="Job expired" tone="error" />
       </View>
     );
   }
 
   return (
-    <View
-      style={{
-        flexDirection: "row",
-        gap: 10,
-        marginTop: 14,
-      }}
-    >
-      {showCall && (
-        <Pressable
-          onPress={callEmployer}
-          style={{
-            backgroundColor: "#0F172A",
-            paddingVertical: 10,
-            paddingHorizontal: 16,
-            borderRadius: 999,
-          }}
-        >
-          <Text
-            style={{
-              color: "#fff",
-              fontWeight: "700",
-            }}
-          >
-            📞 Call
-          </Text>
-        </Pressable>
-      )}
+    <View style={containerStyle}>
+      <View style={rowStyle}>
+        {showCall ? (
+          <AppButton
+            title="Call"
+            onPress={callEmployer}
+            loading={busy}
+            disabled={busy}
+            variant="secondary"
+            size="sm"
+            fullWidth={false}
+          />
+        ) : null}
 
-      {showWhatsApp && (
-        <Pressable
-          onPress={whatsappEmployer}
-          style={{
-            backgroundColor: "#16A34A",
-            paddingVertical: 10,
-            paddingHorizontal: 16,
-            borderRadius: 999,
-          }}
-        >
-          <Text
-            style={{
-              color: "#fff",
-              fontWeight: "700",
-            }}
-          >
-            💬 WhatsApp
-          </Text>
-        </Pressable>
-      )}
+        {showWhatsApp ? (
+          <AppButton
+            title="WhatsApp"
+            onPress={whatsappEmployer}
+            loading={busy}
+            disabled={busy}
+            variant="primary"
+            size="sm"
+            fullWidth={false}
+          />
+        ) : null}
 
-      {showApply && !applied && (
-        <Pressable
-          onPress={onApply}
-          style={{
-            backgroundColor: "#2563EB",
-            paddingVertical: 10,
-            paddingHorizontal: 16,
-            borderRadius: 999,
-          }}
-        >
-          <Text
-            style={{
-              color: "#fff",
-              fontWeight: "700",
-            }}
-          >
-            Apply
-          </Text>
-        </Pressable>
-      )}
+        {showApply && !applied ? (
+          <AppButton
+            title="Apply"
+            onPress={onApply}
+            variant="primary"
+            size="sm"
+            fullWidth={false}
+          />
+        ) : null}
 
-      {showApply && applied && (
-        <View
-          style={{
-            paddingVertical: 10,
-            paddingHorizontal: 16,
-            borderRadius: 999,
-            backgroundColor: "#E5E7EB",
-          }}
-        >
-          <Text
-            style={{
-              color: "#475569",
-              fontWeight: "700",
-            }}
-          >
-            Applied
-          </Text>
-        </View>
-      )}
+        {showApply && applied ? (
+          <View style={appliedWrapStyle}>
+            <AppText variant="label" tone="success" weight="700">
+              Applied
+            </AppText>
+          </View>
+        ) : null}
+      </View>
     </View>
   );
 }

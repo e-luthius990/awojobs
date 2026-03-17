@@ -1,485 +1,780 @@
-import React, { useEffect, useMemo, useState, useCallback } from "react";
-import * as Haptics from "expo-haptics";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
-  View,
-  Text,
-  FlatList,
-  Pressable,
   Alert,
-  ActivityIndicator,
-  RefreshControl,
+  FlatList,
   Platform,
+  RefreshControl,
   ToastAndroid,
+  View,
+  type ViewStyle,
 } from "react-native";
-import { useFocusEffect } from "@react-navigation/native";
+import { NativeStackNavigationProp } from "@react-navigation/native-stack";
+import { useFocusEffect, useNavigation } from "@react-navigation/native";
 
-import { fetchMyJobs, deleteJob } from "../../jobs/jobs.mine";
+import { supabase } from "../../core/supabase";
+import { fetchMyJobs } from "../../jobs/jobs.mine";
+import type { EmployerRootStackParamList } from "../../navigation/EmployerNavigator";
 
-/* =====================================================
-   TYPES
-===================================================== */
+import { useTheme } from "../../theme/useTheme";
+import { AppScreen } from "../../ui/AppScreen";
+import { AppCard } from "../../ui/AppCard";
+import { AppButton } from "../../ui/AppButton";
+import { AppText } from "../../ui/AppText";
+import { EmptyState } from "../../ui/EmptyState";
+import { InlineAlert } from "../../ui/InlineAlert";
+import { StatusBadge } from "../../ui/StatusBadge";
+import { SkeletonCard } from "../../ui/Skeleton";
+
+type EmployerNavProp = NativeStackNavigationProp<EmployerRootStackParamList>;
+
+type JobStatus = "draft" | "pending_payment" | "active" | "expired" | "closed";
+
 type EmployerJob = {
   id: string;
   title: string;
-  description: string | null;
-  pay_type: "daily" | "weekly" | "monthly";
-  location_id: string;
-  employer_id: string;
-  contact_method: "call" | "whatsapp" | "walk_in" | "in_app";
-  contact_phone: string | null;
-  is_sponsored: boolean;
+  status: JobStatus;
+  expires_at: string | null;
+  views_count: number | null;
+  applications_count: number | null;
+  is_sponsored: boolean | null;
   sponsored_until: string | null;
-  expires_at: string;
   created_at: string;
-  applications_count: number;
-  last_application_at: string | null;
 };
 
-type Props = {
-  navigation: any;
-};
+function daysLeft(ts?: string | null) {
+  if (!ts) return null;
+  const diff = new Date(ts).getTime() - Date.now();
+  if (Number.isNaN(diff)) return null;
+  if (diff <= 0) return 0;
+  return Math.ceil(diff / (1000 * 60 * 60 * 24));
+}
 
-/* =====================================================
-   HELPERS
-===================================================== */
-const NEW_WINDOW_HOURS = 24;
+function toast(msg: string) {
+  if (Platform.OS === "android") {
+    ToastAndroid.show(msg, ToastAndroid.SHORT);
+  }
+}
 
-function isNew(date?: string | null) {
-  if (!date) return false;
+function statusLabel(s: JobStatus) {
+  if (s === "pending_payment") return "Pending Payment";
+  if (s === "draft") return "Draft";
+  if (s === "active") return "Active";
+  if (s === "expired") return "Expired";
+  return "Closed";
+}
+
+function statusTone(
+  s: JobStatus,
+): React.ComponentProps<typeof StatusBadge>["tone"] {
+  if (s === "active") return "success";
+  if (s === "pending_payment") return "warning";
+  if (s === "expired") return "error";
+  if (s === "draft") return "info";
+  return "default";
+}
+
+function isBoostActive(job: EmployerJob) {
+  if (!job.is_sponsored) return false;
+  if (!job.sponsored_until) return false;
+  return new Date(job.sponsored_until).getTime() > Date.now();
+}
+
+function QuickStat({ label, value }: { label: string; value: number }) {
   return (
-    Date.now() - new Date(date).getTime() < NEW_WINDOW_HOURS * 60 * 60 * 1000
+    <AppCard variant="elevated" padding="lg" style={{ flex: 1 }}>
+      <View style={{ gap: 4 }}>
+        <AppText variant="caption" tone="secondary" uppercase>
+          {label}
+        </AppText>
+        <AppText variant="h2">{value}</AppText>
+      </View>
+    </AppCard>
   );
 }
 
-/* =====================================================
-   SCREEN
-===================================================== */
-export default function MyJobsScreen({ navigation }: Props) {
+export default function MyJobsScreen() {
+  const navigation = useNavigation<EmployerNavProp>();
+  const { theme } = useTheme();
+
   const [jobs, setJobs] = useState<EmployerJob[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busyIds, setBusyIds] = useState<Set<string>>(new Set());
 
-  /* =====================================================
-     LOAD
-  ====================================================== */
-  const load = useCallback(async (showSpinner = true) => {
-    if (showSpinner) setLoading(true);
+  const inFlightRef = useRef(false);
+
+  const setBusy = useCallback((jobId: string, busy: boolean) => {
+    setBusyIds((prev) => {
+      const next = new Set(prev);
+      if (busy) next.add(jobId);
+      else next.delete(jobId);
+      return next;
+    });
+  }, []);
+
+  const load = useCallback(async (spinner = true) => {
+    if (inFlightRef.current) return;
+    inFlightRef.current = true;
+
+    if (spinner) setLoading(true);
+    setError(null);
 
     try {
       const data = await fetchMyJobs();
-      setJobs(data);
+      setJobs(Array.isArray(data) ? data : []);
     } catch {
-      Alert.alert("Error", "Could not load your jobs.");
+      setError("Could not load your jobs.");
+      if (spinner) {
+        setJobs([]);
+      }
     } finally {
-      if (showSpinner) setLoading(false);
+      if (spinner) setLoading(false);
+      setRefreshing(false);
+      inFlightRef.current = false;
     }
   }, []);
 
   useEffect(() => {
-    load();
+    void load(true);
   }, [load]);
 
   useFocusEffect(
     useCallback(() => {
-      load(false);
+      void load(false);
     }, [load]),
   );
 
-  async function refresh() {
+  const refresh = useCallback(async () => {
     setRefreshing(true);
     await load(false);
-    setRefreshing(false);
-  }
+  }, [load]);
 
-  const activeJobs = useMemo(() => {
+  const normalized = useMemo(() => {
     const now = Date.now();
-    return jobs.filter((j) => new Date(j.expires_at).getTime() > now);
+
+    return jobs.map((j) => {
+      if (j.status === "active" && j.expires_at) {
+        const exp = new Date(j.expires_at).getTime();
+        if (!Number.isNaN(exp) && exp <= now) {
+          return { ...j, status: "expired" as const };
+        }
+      }
+      return j;
+    });
   }, [jobs]);
 
-  /* =====================================================
-     DELETE
-  ====================================================== */
-  function confirmDelete(job: EmployerJob) {
+  const groups = useMemo(() => {
+    const expired: EmployerJob[] = [];
+    const pending: EmployerJob[] = [];
+    const active: EmployerJob[] = [];
+    const draft: EmployerJob[] = [];
+    const closed: EmployerJob[] = [];
+
+    for (const j of normalized) {
+      if (j.status === "expired") expired.push(j);
+      else if (j.status === "pending_payment") pending.push(j);
+      else if (j.status === "active") active.push(j);
+      else if (j.status === "draft") draft.push(j);
+      else closed.push(j);
+    }
+
+    const byCreatedDesc = (a: EmployerJob, b: EmployerJob) =>
+      new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+
+    expired.sort(byCreatedDesc);
+    pending.sort(byCreatedDesc);
+    active.sort(byCreatedDesc);
+    draft.sort(byCreatedDesc);
+    closed.sort(byCreatedDesc);
+
+    return { expired, pending, active, draft, closed };
+  }, [normalized]);
+
+  const ordered = useMemo(
+    () => [
+      ...groups.expired,
+      ...groups.pending,
+      ...groups.active,
+      ...groups.draft,
+      ...groups.closed,
+    ],
+    [groups],
+  );
+
+  const activeCount = groups.active.length;
+  const totalCount = normalized.length;
+  const expiredCount = groups.expired.length;
+  const pendingCount = groups.pending.length;
+  const draftCount = groups.draft.length;
+
+  async function optimisticUpdate(
+    jobId: string,
+    patch: Partial<EmployerJob>,
+    fn: () => Promise<void>,
+    failMsg: string,
+  ) {
+    if (busyIds.has(jobId)) return;
+
+    const prev = jobs;
+    setBusy(jobId, true);
+    setJobs((cur) => cur.map((j) => (j.id === jobId ? { ...j, ...patch } : j)));
+
+    try {
+      await fn();
+    } catch {
+      setJobs(prev);
+      setError(failMsg);
+    } finally {
+      setBusy(jobId, false);
+    }
+  }
+
+  function confirmClose(job: EmployerJob) {
     Alert.alert(
-      "Delete job?",
-      "This job will be removed immediately. This cannot be undone.",
+      "Close this job?",
+      "Applicants will no longer see this job. You can renew later.",
       [
         { text: "Cancel", style: "cancel" },
         {
-          text: "Delete",
+          text: "Close job",
           style: "destructive",
-          onPress: () => handleDelete(job.id),
+          onPress: () => {
+            void closeJob(job.id);
+          },
         },
       ],
     );
   }
 
-  async function handleDelete(id: string) {
-    setDeletingId(id);
+  async function closeJob(jobId: string) {
+    const {
+      data: { user },
+      error: authError,
+    } = await supabase.auth.getUser();
 
-    try {
-      await deleteJob(id);
-      setJobs((prev) => prev.filter((j) => j.id !== id));
-
-      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-
-      if (Platform.OS === "android") {
-        ToastAndroid.show("Job deleted", ToastAndroid.SHORT);
-      }
-    } catch {
-      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-
-      Alert.alert("Failed", "Could not delete job.");
-    } finally {
-      setDeletingId(null);
+    if (authError || !user) {
+      setError("You are not signed in.");
+      return;
     }
+
+    await optimisticUpdate(
+      jobId,
+      { status: "closed" },
+      async () => {
+        const { error } = await supabase
+          .from("jobs")
+          .update({ status: "closed" })
+          .eq("id", jobId)
+          .eq("employer_id", user.id);
+
+        if (error) throw error;
+        toast("Job closed");
+      },
+      "Could not close job.",
+    );
   }
 
-  /* =====================================================
-     LOADING STATE
-  ====================================================== */
+  function renewJob(job: EmployerJob) {
+    navigation.navigate("PostJobFlow", {
+      screen: "Payment",
+      params: {
+        draftId: job.id,
+        mode: "renew",
+      },
+    });
+  }
+
+  function sponsorJob(job: EmployerJob) {
+    navigation.navigate("PostJobFlow", {
+      screen: "SponsorPayment",
+      params: {
+        jobId: job.id,
+      },
+    });
+  }
+
+  function continuePayment(job: EmployerJob) {
+    navigation.navigate("PostJobFlow", {
+      screen: "Payment",
+      params: {
+        draftId: job.id,
+        mode: "renew",
+      },
+    });
+  }
+
+  function editDraft(job: EmployerJob) {
+    navigation.navigate("PostJobFlow", {
+      screen: "PostJob",
+      params: {
+        jobId: job.id,
+        mode: "edit",
+      },
+    });
+  }
+
+  async function deleteDraft(job: EmployerJob) {
+    const {
+      data: { user },
+      error: authError,
+    } = await supabase.auth.getUser();
+
+    if (authError || !user) {
+      setError("You are not signed in.");
+      return;
+    }
+
+    if (busyIds.has(job.id)) return;
+
+    const prev = jobs;
+    setBusy(job.id, true);
+    setJobs((cur) => cur.filter((j) => j.id !== job.id));
+
+    const { error } = await supabase
+      .from("jobs")
+      .delete()
+      .eq("id", job.id)
+      .eq("employer_id", user.id)
+      .eq("status", "draft");
+
+    if (error) {
+      setJobs(prev);
+      setError("Could not delete draft.");
+      setBusy(job.id, false);
+      return;
+    }
+
+    setBusy(job.id, false);
+    toast("Draft deleted");
+  }
+
+  const headerBlockStyle = useMemo<ViewStyle>(
+    () => ({
+      gap: theme.spacing.lg,
+      marginBottom: theme.spacing.lg,
+    }),
+    [theme.spacing.lg],
+  );
+
+  const heroWrapStyle = useMemo<ViewStyle>(
+    () => ({ gap: theme.spacing.sm }),
+    [theme.spacing.sm],
+  );
+
+  const statsGridStyle = useMemo<ViewStyle>(
+    () => ({
+      flexDirection: "row",
+      gap: theme.spacing.sm,
+    }),
+    [theme.spacing.sm],
+  );
+
+  const listContentStyle = useMemo<ViewStyle>(
+    () => ({
+      paddingBottom: theme.spacing.xxxl,
+      paddingHorizontal: theme.spacing.screenX,
+      paddingTop: theme.spacing.md,
+    }),
+    [theme.spacing.xxxl, theme.spacing.screenX, theme.spacing.md],
+  );
+
+  const cardContentStyle = useMemo<ViewStyle>(
+    () => ({ gap: theme.spacing.md }),
+    [theme.spacing.md],
+  );
+
+  const topRowStyle = useMemo<ViewStyle>(
+    () => ({
+      flexDirection: "row",
+      alignItems: "flex-start",
+      justifyContent: "space-between",
+      gap: theme.spacing.sm,
+    }),
+    [theme.spacing.sm],
+  );
+
+  const titleWrapStyle = useMemo<ViewStyle>(
+    () => ({
+      flex: 1,
+      gap: theme.spacing.xs,
+    }),
+    [theme.spacing.xs],
+  );
+
+  const metaRowStyle = useMemo<ViewStyle>(
+    () => ({
+      flexDirection: "row",
+      alignItems: "center",
+      flexWrap: "wrap",
+      gap: theme.spacing.xs,
+    }),
+    [theme.spacing.xs],
+  );
+
+  const actionRowStyle = useMemo<ViewStyle>(
+    () => ({
+      flexDirection: "row",
+      flexWrap: "wrap",
+      gap: theme.spacing.sm,
+    }),
+    [theme.spacing.sm],
+  );
+
+  const loaderWrapStyle = useMemo<ViewStyle>(
+    () => ({ gap: theme.spacing.md }),
+    [theme.spacing.md],
+  );
+
+  const itemWrapStyle = useMemo<ViewStyle>(
+    () => ({ marginBottom: theme.spacing.sm }),
+    [theme.spacing.sm],
+  );
+
   if (loading) {
     return (
-      <View style={center}>
-        <ActivityIndicator />
-        <Text style={subtle}>Loading your jobs…</Text>
-      </View>
+      <AppScreen scroll>
+        <View style={loaderWrapStyle}>
+          <SkeletonCard lines={4} />
+          <SkeletonCard lines={4} />
+          <SkeletonCard lines={4} />
+        </View>
+      </AppScreen>
     );
   }
 
-  /* =====================================================
-     EMPTY STATE
-  ====================================================== */
-  if (jobs.length === 0) {
+  if (error && ordered.length === 0) {
     return (
-      <View style={center}>
-        <Text style={title}>No jobs posted yet</Text>
-        <Text style={subtleCentered}>
-          Jobs you post will appear here. You can edit, renew, or delete them
-          anytime.
-        </Text>
-
-        <Pressable
-          onPress={() => navigation.navigate("PostJobFlow")}
-          style={primaryButton}
-        >
-          <Text style={primaryText}>＋ Post your first job</Text>
-        </Pressable>
-      </View>
+      <AppScreen centerContent>
+        <EmptyState
+          title="Jobs unavailable"
+          message={error}
+          action={
+            <AppButton
+              title="Retry"
+              onPress={() => {
+                setLoading(true);
+                void load(true);
+              }}
+              variant="primary"
+            />
+          }
+        />
+      </AppScreen>
     );
   }
 
-  /* =====================================================
-     LIST
-  ====================================================== */
-  return (
-    <View style={{ flex: 1, backgroundColor: "#F8F9FB" }}>
-      <FlatList
-        data={jobs}
-        keyExtractor={(item) => item.id}
-        initialNumToRender={8}
-        windowSize={5}
-        removeClippedSubviews
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={{
-          padding: 16,
-          paddingBottom: 32,
-        }}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={refresh} />
-        }
-        ListHeaderComponent={
-          <View style={header}>
-            <Text style={headerTitle}>
-              My jobs ({activeJobs.length} active, {jobs.length} total)
-            </Text>
-
-            <Pressable
+  if (ordered.length === 0) {
+    return (
+      <AppScreen centerContent>
+        <EmptyState
+          title="No jobs yet"
+          message="Post your first job to start receiving views and applications."
+          action={
+            <AppButton
+              title="Post Job"
               onPress={() => navigation.navigate("PostJobFlow")}
-              style={headerButton}
-            >
-              <Text style={headerButtonText}>＋ Post Job</Text>
-            </Pressable>
-          </View>
-        }
-        renderItem={({ item }) => {
-          const now = Date.now();
-          const expired = new Date(item.expires_at).getTime() <= now;
+              variant="primary"
+            />
+          }
+        />
+      </AppScreen>
+    );
+  }
 
-          const sponsoredActive =
-            item.is_sponsored &&
-            item.sponsored_until &&
-            new Date(item.sponsored_until).getTime() > now;
+  const renderJob = ({ item }: { item: EmployerJob }) => {
+    const jobExpires = daysLeft(item.expires_at);
+    const boostExpires = daysLeft(item.sponsored_until);
 
-          const apps = item.applications_count ?? 0;
-          const showNew = isNew(item.last_application_at);
+    const views = item.views_count ?? 0;
+    const apps = item.applications_count ?? 0;
 
-          return (
-            <View style={card}>
-              <Text style={jobTitle}>{item.title}</Text>
+    const boostActive = isBoostActive(item);
+    const isBusy = busyIds.has(item.id);
 
-              {sponsoredActive && (
-                <Text style={sponsoredText}>
-                  Sponsored until{" "}
-                  {new Date(item.sponsored_until!).toLocaleDateString()}
-                </Text>
-              )}
+    const shouldPromptBoost =
+      item.status === "active" && !boostActive && views < 20;
 
-              <Text style={metaText}>
-                Pay: <Text style={{ fontWeight: "600" }}>{item.pay_type}</Text>
-                {expired && <Text style={expiredText}> • Expired</Text>}
-              </Text>
+    const shouldPromptExtend =
+      item.status === "active" &&
+      boostActive &&
+      boostExpires !== null &&
+      boostExpires <= 2;
 
-              <Text style={subtle}>
-                Expires on {new Date(item.expires_at).toLocaleDateString()}
-              </Text>
+    return (
+      <View style={itemWrapStyle}>
+        <AppCard
+          variant={
+            item.status === "expired"
+              ? "muted"
+              : item.status === "pending_payment"
+                ? "premium"
+                : "elevated"
+          }
+          padding="lg"
+        >
+          <View style={cardContentStyle}>
+            <View style={topRowStyle}>
+              <View style={titleWrapStyle}>
+                <AppText variant="titleLg" numberOfLines={2}>
+                  {item.title}
+                </AppText>
 
-              {apps > 0 && (
-                <View style={appRow}>
-                  <View style={appBadge}>
-                    <Text style={appBadgeText}>
-                      {apps} application
-                      {apps > 1 ? "s" : ""}
-                    </Text>
-                  </View>
-
-                  {showNew && (
-                    <View style={newBadge}>
-                      <Text style={newBadgeText}>NEW</Text>
-                    </View>
-                  )}
+                <View style={metaRowStyle}>
+                  <StatusBadge
+                    label={statusLabel(item.status)}
+                    tone={statusTone(item.status)}
+                  />
+                  {boostActive ? (
+                    <StatusBadge label="Boost Active" tone="sponsored" />
+                  ) : null}
                 </View>
-              )}
-
-              <View style={actionRow}>
-                <Pressable
-                  disabled={sponsoredActive}
-                  onPress={() => {
-                    if (sponsoredActive) {
-                      Alert.alert(
-                        "Sponsored Job",
-                        "You cannot edit this job while sponsorship is active.",
-                      );
-                      return;
-                    }
-
-                    navigation.navigate("PostJobFlow", {
-                      screen: "PostJob",
-                      params: {
-                        job: item,
-                        jobId: item.id,
-                        mode: expired ? "renew" : "edit",
-                      },
-                    });
-                  }}
-                  style={[
-                    editButton,
-                    sponsoredActive && {
-                      opacity: 0.5,
-                    },
-                  ]}
-                >
-                  <Text style={editText}>{expired ? "Renew" : "Edit"}</Text>
-                </Pressable>
-
-                <Pressable
-                  disabled={deletingId === item.id || sponsoredActive}
-                  onPress={() => {
-                    if (sponsoredActive) {
-                      Alert.alert(
-                        "Sponsored Job",
-                        "You cannot delete a job while sponsorship is active.",
-                      );
-                      return;
-                    }
-
-                    confirmDelete(item);
-                  }}
-                  style={[
-                    deleteButton,
-                    (deletingId === item.id || sponsoredActive) && {
-                      opacity: 0.6,
-                    },
-                  ]}
-                >
-                  <Text style={deleteText}>
-                    {deletingId === item.id ? "Deleting…" : "Delete"}
-                  </Text>
-                </Pressable>
               </View>
             </View>
-          );
-        }}
+
+            {item.status === "active" && jobExpires !== null ? (
+              <AppText
+                variant="bodySm"
+                tone={jobExpires <= 3 ? "error" : "secondary"}
+                weight={jobExpires <= 3 ? "700" : "400"}
+              >
+                Job expires in {jobExpires} day{jobExpires !== 1 ? "s" : ""}
+              </AppText>
+            ) : null}
+
+            {item.status === "active" &&
+            boostActive &&
+            boostExpires !== null ? (
+              <AppText
+                variant="bodySm"
+                tone={boostExpires <= 2 ? "warning" : "secondary"}
+                weight={boostExpires <= 2 ? "700" : "400"}
+              >
+                Boost ends in {boostExpires} day
+                {boostExpires !== 1 ? "s" : ""}
+              </AppText>
+            ) : null}
+
+            <View style={metaRowStyle}>
+              <AppText variant="bodySm" tone="secondary">
+                {views} views
+              </AppText>
+              <AppText variant="bodySm" tone="tertiary">
+                •
+              </AppText>
+              <AppText variant="bodySm" tone="secondary">
+                {apps} applications
+              </AppText>
+            </View>
+
+            {shouldPromptBoost || shouldPromptExtend ? (
+              <InlineAlert
+                tone="warning"
+                title={
+                  shouldPromptExtend
+                    ? "Boost ending soon"
+                    : "Increase visibility"
+                }
+                message={
+                  shouldPromptExtend
+                    ? "Extend this sponsored job to keep it prominent in the feed."
+                    : "This active job has low visibility. Sponsoring it can help more applicants see it."
+                }
+                action={
+                  <AppButton
+                    title={
+                      shouldPromptExtend ? "Extend Boost" : "Boost Visibility"
+                    }
+                    onPress={() => sponsorJob(item)}
+                    variant="secondary"
+                  />
+                }
+              />
+            ) : null}
+
+            <View style={actionRowStyle}>
+              {item.status === "expired" ? (
+                <AppButton
+                  title="Renew"
+                  onPress={() => renewJob(item)}
+                  variant="primary"
+                  size="sm"
+                  fullWidth={false}
+                  disabled={isBusy}
+                />
+              ) : null}
+
+              {item.status === "pending_payment" ? (
+                <AppButton
+                  title="Complete Payment"
+                  onPress={() => continuePayment(item)}
+                  variant="primary"
+                  size="sm"
+                  fullWidth={false}
+                  disabled={isBusy}
+                />
+              ) : null}
+
+              {item.status === "active" ? (
+                <>
+                  <AppButton
+                    title="Close"
+                    onPress={() => confirmClose(item)}
+                    variant="secondary"
+                    size="sm"
+                    fullWidth={false}
+                    disabled={isBusy}
+                    loading={isBusy}
+                  />
+                  <AppButton
+                    title="Sponsor"
+                    onPress={() => sponsorJob(item)}
+                    variant="secondary"
+                    size="sm"
+                    fullWidth={false}
+                    disabled={isBusy}
+                  />
+                </>
+              ) : null}
+
+              {item.status === "draft" ? (
+                <>
+                  <AppButton
+                    title="Edit Draft"
+                    onPress={() => editDraft(item)}
+                    variant="secondary"
+                    size="sm"
+                    fullWidth={false}
+                    disabled={isBusy}
+                  />
+                  <AppButton
+                    title="Delete"
+                    onPress={() =>
+                      Alert.alert(
+                        "Delete draft?",
+                        "This draft will be removed.",
+                        [
+                          { text: "Cancel", style: "cancel" },
+                          {
+                            text: "Delete",
+                            style: "destructive",
+                            onPress: () => {
+                              void deleteDraft(item);
+                            },
+                          },
+                        ],
+                      )
+                    }
+                    variant="destructive"
+                    size="sm"
+                    fullWidth={false}
+                    disabled={isBusy}
+                    loading={isBusy}
+                  />
+                </>
+              ) : null}
+            </View>
+          </View>
+        </AppCard>
+      </View>
+    );
+  };
+
+  const bulkRenewAvailable = typeof navigation.navigate === "function";
+
+  const headerComponent = (
+    <View style={headerBlockStyle}>
+      <AppCard variant="elevated" padding="lg">
+        <View style={heroWrapStyle}>
+          <StatusBadge label="Overview" tone="info" />
+          <AppText variant="h3">My Jobs</AppText>
+          <AppText variant="bodySm" tone="secondary">
+            Track performance, renew expired posts, and manage your active
+            listings.
+          </AppText>
+        </View>
+      </AppCard>
+
+      <View style={statsGridStyle}>
+        <QuickStat label="Active" value={activeCount} />
+        <QuickStat label="Total" value={totalCount} />
+      </View>
+
+      {error ? <InlineAlert tone="error" message={error} /> : null}
+
+      {expiredCount >= 2 ? (
+        <InlineAlert
+          tone="warning"
+          title="Several jobs have expired"
+          message={`You have ${expiredCount} expired jobs ready for renewal.`}
+          action={
+            bulkRenewAvailable ? (
+              <AppButton
+                title={`Renew All Expired (${expiredCount})`}
+                onPress={() =>
+                  navigation.navigate(
+                    "BulkRenew" as never,
+                    {
+                      jobIds: groups.expired.map((j) => j.id),
+                    } as never,
+                  )
+                }
+                variant="secondary"
+              />
+            ) : undefined
+          }
+        />
+      ) : null}
+
+      {pendingCount > 0 ? (
+        <InlineAlert
+          tone="info"
+          title="Payments need attention"
+          message={`${pendingCount} job${pendingCount > 1 ? "s" : ""} ${pendingCount > 1 ? "are" : "is"} still waiting for payment completion.`}
+        />
+      ) : null}
+
+      {draftCount > 0 ? (
+        <InlineAlert
+          tone="info"
+          title="Drafts available"
+          message={`${draftCount} draft job${draftCount > 1 ? "s are" : " is"} waiting to be completed.`}
+        />
+      ) : null}
+
+      <AppButton
+        title="Post Job"
+        onPress={() => navigation.navigate("PostJobFlow")}
+        variant="primary"
       />
     </View>
   );
+
+  return (
+    <AppScreen padded={false} keyboardAvoiding={false}>
+      <FlatList
+        data={ordered}
+        keyExtractor={(item) => item.id}
+        renderItem={renderJob}
+        initialNumToRender={8}
+        windowSize={5}
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={refresh}
+            tintColor={theme.colors.primary}
+          />
+        }
+        contentContainerStyle={listContentStyle}
+        ListHeaderComponent={headerComponent}
+      />
+    </AppScreen>
+  );
 }
-
-/* =====================================================
-   STYLES
-===================================================== */
-
-const center = {
-  flex: 1,
-  justifyContent: "center",
-  alignItems: "center",
-  padding: 24,
-};
-
-const title = {
-  fontSize: 18,
-  fontWeight: "800" as const,
-  color: "#0F172A",
-  marginBottom: 8,
-};
-
-const subtle = {
-  fontSize: 14,
-  color: "#64748B",
-  marginTop: 8,
-};
-
-const subtleCentered = {
-  fontSize: 14,
-  color: "#64748B",
-  textAlign: "center" as const,
-  marginBottom: 16,
-};
-
-const primaryButton = {
-  backgroundColor: "#0F172A",
-  paddingVertical: 12,
-  paddingHorizontal: 24,
-  borderRadius: 999,
-};
-
-const primaryText = {
-  color: "#fff",
-  fontWeight: "700" as const,
-};
-
-const header = {
-  flexDirection: "row" as const,
-  justifyContent: "space-between" as const,
-  alignItems: "center" as const,
-  marginBottom: 16,
-};
-
-const headerTitle = {
-  fontSize: 18,
-  fontWeight: "800" as const,
-  color: "#0F172A",
-};
-
-const headerButton = {
-  backgroundColor: "#0F172A",
-  paddingVertical: 8,
-  paddingHorizontal: 14,
-  borderRadius: 999,
-};
-
-const headerButtonText = {
-  color: "#fff",
-  fontWeight: "700" as const,
-};
-
-const card = {
-  backgroundColor: "#FFFFFF",
-  borderRadius: 18,
-  padding: 16,
-  marginBottom: 14,
-  borderWidth: 1,
-  borderColor: "#E5E7EB",
-};
-
-const jobTitle = {
-  fontSize: 15,
-  fontWeight: "700" as const,
-  color: "#0F172A",
-  marginBottom: 4,
-};
-
-const sponsoredText = {
-  fontSize: 12,
-  fontWeight: "700" as const,
-  color: "#2563EB",
-  marginBottom: 6,
-};
-
-const metaText = {
-  fontSize: 13,
-  color: "#334155",
-};
-
-const expiredText = {
-  color: "#64748B",
-  fontWeight: "700" as const,
-};
-
-const appRow = {
-  flexDirection: "row" as const,
-  alignItems: "center" as const,
-  marginTop: 10,
-};
-
-const appBadge = {
-  backgroundColor: "#EEF2FF",
-  paddingHorizontal: 10,
-  paddingVertical: 4,
-  borderRadius: 999,
-  marginRight: 8,
-};
-
-const appBadgeText = {
-  fontSize: 12,
-  fontWeight: "700" as const,
-  color: "#3730A3",
-};
-
-const newBadge = {
-  backgroundColor: "#DC2626",
-  paddingHorizontal: 6,
-  paddingVertical: 2,
-  borderRadius: 6,
-};
-
-const newBadgeText = {
-  color: "#fff",
-  fontSize: 10,
-  fontWeight: "800" as const,
-};
-
-const actionRow = {
-  flexDirection: "row" as const,
-  marginTop: 14,
-};
-
-const editButton = {
-  paddingVertical: 6,
-  paddingHorizontal: 14,
-  borderRadius: 999,
-  borderWidth: 1,
-  borderColor: "#0F172A",
-  marginRight: 10,
-};
-
-const editText = {
-  color: "#0F172A",
-  fontWeight: "700" as const,
-  fontSize: 13,
-};
-
-const deleteButton = {
-  paddingVertical: 6,
-  paddingHorizontal: 14,
-  borderRadius: 999,
-  borderWidth: 1,
-  borderColor: "#DC2626",
-};
-
-const deleteText = {
-  color: "#DC2626",
-  fontWeight: "700" as const,
-  fontSize: 13,
-};

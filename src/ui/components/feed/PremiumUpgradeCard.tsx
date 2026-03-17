@@ -1,111 +1,56 @@
-import React from "react";
-import { View, Text, Pressable, StyleSheet } from "react-native";
-import { LinearGradient } from "expo-linear-gradient";
-import { Ionicons } from "@expo/vector-icons";
+import React, { useMemo } from "react";
+import { StyleSheet, View } from "react-native";
+
+import { useTheme } from "../../../theme/useTheme";
+import { AppCard } from "../../AppCard";
+import { AppButton } from "../../AppButton";
+import { AppText } from "../../AppText";
+import { StatusBadge } from "../../StatusBadge";
 
 type Props = {
   onPress: () => void;
 };
 
 export default function PremiumUpgradeCard({ onPress }: Props) {
+  const { theme } = useTheme();
+
+  const styles = useMemo(
+    () =>
+      StyleSheet.create({
+        container: {
+          marginBottom: theme.spacing.md,
+        },
+
+        content: {
+          gap: theme.spacing.md,
+        },
+
+        textBlock: {
+          gap: theme.spacing.xs,
+        },
+      }),
+    [theme],
+  );
+
   return (
-    <LinearGradient
-      colors={["#111827", "#1F2937"]}
-      start={{ x: 0, y: 0 }}
-      end={{ x: 1, y: 1 }}
-      style={styles.container}
-    >
-      {/* PRO Badge */}
-      <View style={styles.badge}>
-        <Text style={styles.badgeText}>PRO</Text>
-      </View>
+    <AppCard variant="premium" padding="md" style={styles.container}>
+      <View style={styles.content}>
+        <StatusBadge label="Premium Access" tone="premium" />
 
-      {/* Title Row */}
-      <View style={styles.titleRow}>
-        <Ionicons
-          name="globe-outline"
-          size={18}
-          color="#22C55E"
-          style={{ marginRight: 8 }}
+        <View style={styles.textBlock}>
+          <AppText variant="titleLg">Unlock Nationwide Jobs</AppText>
+
+          <AppText variant="bodySm" tone="secondary">
+            Explore jobs across Uganda and go beyond your district on AwoJobs.
+          </AppText>
+        </View>
+
+        <AppButton
+          title="Upgrade to Premium"
+          onPress={onPress}
+          variant="primary"
         />
-        <Text style={styles.title}>Unlock Nationwide Jobs</Text>
       </View>
-
-      {/* Subtitle */}
-      <Text style={styles.subtitle}>
-        View job opportunities across all districts in Uganda.
-      </Text>
-
-      {/* CTA */}
-      <Pressable
-        onPress={onPress}
-        style={({ pressed }) => [
-          styles.button,
-          pressed && styles.buttonPressed,
-        ]}
-      >
-        <Text style={styles.buttonText}>Upgrade Now</Text>
-      </Pressable>
-    </LinearGradient>
+    </AppCard>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    margin: 16,
-    padding: 18,
-    borderRadius: 18,
-  },
-
-  badge: {
-    alignSelf: "flex-start",
-    backgroundColor: "#2563EB",
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 999,
-    marginBottom: 10,
-  },
-
-  badgeText: {
-    color: "#FFF",
-    fontSize: 11,
-    fontWeight: "800",
-    letterSpacing: 0.5,
-  },
-
-  titleRow: {
-    flexDirection: "row",
-    alignItems: "center",
-  },
-
-  title: {
-    color: "#FFF",
-    fontWeight: "800",
-    fontSize: 16,
-  },
-
-  subtitle: {
-    color: "#CBD5E1",
-    marginTop: 6,
-    fontSize: 14,
-    lineHeight: 20,
-  },
-
-  button: {
-    marginTop: 14,
-    backgroundColor: "#22C55E",
-    paddingVertical: 12,
-    borderRadius: 12,
-    alignItems: "center",
-  },
-
-  buttonPressed: {
-    opacity: 0.85,
-  },
-
-  buttonText: {
-    color: "#FFF",
-    fontWeight: "700",
-    fontSize: 14,
-  },
-});

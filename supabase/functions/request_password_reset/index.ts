@@ -1,22 +1,49 @@
-import { serve } from "https://deno.land/std/http/server.ts";
+import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const supabase = createClient(
   Deno.env.get("SUPABASE_URL")!,
-  Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+  Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+  { auth: { persistSession: false } }
 );
 
 const AT_API_KEY = Deno.env.get("AFRICAS_TALKING_API_KEY")!;
 const AT_USERNAME = Deno.env.get("AFRICAS_TALKING_USERNAME")!;
 const AT_SENDER = Deno.env.get("AFRICAS_TALKING_SENDER_ID")!;
 
+const TOKEN_EXP_MIN = 10;
+const RATE_LIMIT_SECONDS = 60;
+
+/* =====================================================
+   HELPERS
+===================================================== */
+
 function normalizeUgPhone(phone: string): string {
-  const cleaned = phone.replace(/\D/g, "");
+  if (!phone) throw new Error("Phone required");
 
-  if (cleaned.startsWith("256")) return "+" + cleaned;
-  if (cleaned.startsWith("0")) return "+256" + cleaned.slice(1);
+  const digits = phone.replace(/\D/g, "");
 
-  throw new Error("Invalid phone");
+  let normalized: string;
+
+  if (digits.startsWith("256") && digits.length === 12) {
+    normalized = digits;
+  } else if (digits.startsWith("0") && digits.length === 10) {
+    normalized = "256" + digits.slice(1);
+  } else if (digits.length === 9 && digits.startsWith("7")) {
+    normalized = "256" + digits;
+  } else {
+    throw new Error("Invalid Uganda phone format");
+  }
+
+  if (!/^2567\d{8}$/.test(normalized)) {
+    throw new Error("Invalid Uganda mobile number");
+  }
+
+  return "+" + normalized; // 🔥 THIS LINE FIXES EVERYTHING
+}
+
+function generateOTP(): string {
+  return Math.floor(100000 + Math.random() * 900000).toString();
 }
 
 async function sha256(input: string) {
@@ -50,9 +77,13 @@ async function sendSMS(phone: string, message: string) {
   );
 
   if (!response.ok) {
-    console.error("SMS send failed:", await response.text());
+    console.error("SMS failed:", await response.text());
   }
 }
+
+/* =====================================================
+   EDGE ENTRY
+===================================================== */
 
 serve(async (req) => {
   if (req.method !== "POST") {
@@ -60,8 +91,32 @@ serve(async (req) => {
   }
 
   try {
-    const { phone } = await req.json();
-    const normalized = normalizeUgPhone(phone);
+    const body = await req.json().catch(() => null);
+    if (!body?.phone) {
+      return Response.json({ ok: true });
+    }
+
+    const normalized = normalizeUgPhone(body.phone);
+
+    /* -----------------------------------------
+       RATE LIMIT
+    ------------------------------------------ */
+
+    const since = new Date(Date.now() - RATE_LIMIT_SECONDS * 1000).toISOString();
+
+    const { count } = await supabase
+      .from("password_reset_tokens")
+      .select("id", { count: "exact", head: true })
+      .eq("phone_number", normalized)
+      .gte("created_at", since);
+
+    if ((count ?? 0) > 0) {
+      return Response.json({ ok: true });
+    }
+
+    /* -----------------------------------------
+       LOOKUP USER (NO ENUMERATION)
+    ------------------------------------------ */
 
     const { data: user } = await supabase
       .from("profiles")
@@ -69,29 +124,50 @@ serve(async (req) => {
       .eq("phone_number", normalized)
       .maybeSingle();
 
-    // Always generic success (no enumeration)
     if (!user) {
       return Response.json({ ok: true });
     }
 
-    const token = crypto.randomUUID().slice(0, 6); // shorter for SMS
-    const tokenHash = await sha256(token);
+    /* -----------------------------------------
+       CLEAN OLD TOKENS
+    ------------------------------------------ */
 
-    const expires = new Date(Date.now() + 10 * 60 * 1000);
+    await supabase
+      .from("password_reset_tokens")
+      .delete()
+      .eq("user_id", user.id);
+
+    /* -----------------------------------------
+       CREATE NEW TOKEN
+    ------------------------------------------ */
+
+    const otp = generateOTP();
+    const tokenHash = await sha256(otp);
+
+    const expires = new Date(
+      Date.now() + TOKEN_EXP_MIN * 60 * 1000
+    ).toISOString();
 
     await supabase.from("password_reset_tokens").insert({
       user_id: user.id,
+      phone_number: normalized,
       token_hash: tokenHash,
-      expires_at: expires.toISOString(),
+      expires_at: expires,
+      attempts: 0,
     });
 
-    const message = `AwoJobs password reset code: ${token}. Expires in 10 minutes.`;
+    /* -----------------------------------------
+       SEND SMS
+    ------------------------------------------ */
+
+    const message = `AwoJobs reset code: ${otp}. Expires in ${TOKEN_EXP_MIN} minutes.`;
 
     await sendSMS(normalized, message);
 
     return Response.json({ ok: true });
+
   } catch (err) {
-    console.error(err);
+    console.error("[password_reset_request]", err);
     return Response.json({ ok: true });
   }
 });

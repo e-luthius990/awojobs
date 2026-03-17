@@ -4,7 +4,6 @@ export function validateJob(input: {
   pay_type: string;
   contact_method: string;
   contact_phone?: string;
-  expires_at: Date;
 }) {
   /* ---------------- TITLE ---------------- */
 
@@ -22,17 +21,15 @@ export function validateJob(input: {
     throw new Error("Links are not allowed in the job title");
   }
 
-  // Block excessive repeating characters (spam)
   if (/(.)\1{6,}/.test(title)) {
     throw new Error("Job title contains excessive repeated characters");
   }
 
-  // Block excessive ALL CAPS (basic spam signal)
   const upperRatio =
     title.replace(/[^A-Z]/g, "").length / title.length;
 
   if (upperRatio > 0.8 && title.length > 8) {
-    throw new Error("Job title cannot be all caps");
+    throw new Error("Job title cannot be mostly all caps");
   }
 
   /* ---------------- DESCRIPTION ---------------- */
@@ -52,6 +49,7 @@ export function validateJob(input: {
   /* ---------------- PAY TYPE ---------------- */
 
   const payType = input.pay_type?.toLowerCase();
+
   if (!["daily", "weekly", "monthly"].includes(payType)) {
     throw new Error("Invalid pay type");
   }
@@ -59,6 +57,7 @@ export function validateJob(input: {
   /* ---------------- CONTACT METHOD ---------------- */
 
   const contactMethod = input.contact_method?.toLowerCase();
+
   if (!["call", "whatsapp", "walk_in", "in_app"].includes(contactMethod)) {
     throw new Error("Invalid contact method");
   }
@@ -74,28 +73,11 @@ export function validateJob(input: {
 
     const normalized = phone.replace(/\s+/g, "");
 
-    // Uganda mobile or common landline formats
     const isValidUgPhone =
       /^(\+256\d{9}|0\d{9})$/.test(normalized);
 
     if (!isValidUgPhone) {
       throw new Error("Invalid Uganda phone number format");
     }
-  }
-
-  /* ---------------- EXPIRY ---------------- */
-
-  const now = Date.now();
-  const expiry = input.expires_at?.getTime();
-
-  if (!expiry || expiry <= now) {
-    throw new Error("Expiry must be in the future");
-  }
-
-  const maxDays = 30;
-  const maxExpiry = now + maxDays * 24 * 60 * 60 * 1000;
-
-  if (expiry > maxExpiry) {
-    throw new Error("Expiry cannot exceed 30 days");
   }
 }

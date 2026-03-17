@@ -1,17 +1,34 @@
-import React, { useMemo, useCallback, memo } from "react";
+import React, { useCallback, useMemo, memo } from "react";
 import {
-  View,
   FlatList,
-  Text,
-  StyleSheet,
   RefreshControl,
-  Pressable,
+  View,
+  ActivityIndicator,
+  type ViewStyle,
 } from "react-native";
+import type { CompositeNavigationProp } from "@react-navigation/native";
+import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 
 import FeedList from "@ui/components/feed/FeedList";
 import PremiumUpgradeCard from "@ui/components/feed/PremiumUpgradeCard";
-import { JobCardSkeleton } from "@ui/components/JobCardSkeleton";
-import { FeedJob } from "../../jobs/jobs.types";
+import type { FeedJob } from "../../jobs/jobs.types";
+import type { FeedStackParamList } from "../../navigation/FeedNavigator";
+import type { RootStackParamList } from "../../navigation/RootNavigator";
+
+import { useTheme } from "../../theme/useTheme";
+import { AppScreen } from "../../ui/AppScreen";
+import { AppText } from "../../ui/AppText";
+import { AppCard } from "../../ui/AppCard";
+import { AppButton } from "../../ui/AppButton";
+import { EmptyState } from "../../ui/EmptyState";
+import { SegmentedControl } from "../../ui/SegmentedControl";
+import { SkeletonCard } from "../../ui/Skeleton";
+import { StatusBadge } from "../../ui/StatusBadge";
+
+type FeedNavigationProp = CompositeNavigationProp<
+  NativeStackNavigationProp<FeedStackParamList, "Feed">,
+  NativeStackNavigationProp<RootStackParamList>
+>;
 
 type SkeletonItem = {
   id: string;
@@ -22,62 +39,111 @@ type ListItem = FeedJob | SkeletonItem;
 
 type PremiumState = {
   active: boolean;
-  expires_at: string | null;
-  days_remaining: number;
   scope: "local" | "national";
-  phone: string | null;
+  requested_scope: "local" | "national";
+  can_access_national: boolean;
 };
 
 type Props = {
   items: FeedJob[];
   loading: boolean;
+  loadingMore?: boolean;
+  hasMore?: boolean;
+  onLoadMore?: () => void;
   premium: PremiumState | null;
   requestedScope: "local" | "national";
+  effectiveScope: "local" | "national";
   setRequestedScope?: (s: "local" | "national") => void;
   dailyPulseCount?: number;
-  navigation: any;
+  navigation: FeedNavigationProp;
   refresh?: () => void;
+  refreshing?: boolean;
+  error?: string | null;
   isGuest: boolean;
+  isPremium: boolean;
+  hasValidLocation: boolean;
+  isNationalLocked: boolean;
+  onOpenPremium: () => void;
+  onOpenLocation: () => void;
+  hasEntered?: boolean;
 };
+
+function DailyPulseCard({ count }: { count: number }) {
+  return (
+    <AppCard variant="muted" padding="lg">
+      <View>
+        <View style={{ marginBottom: 8 }}>
+          <StatusBadge label="Daily Pulse" tone="info" />
+        </View>
+
+        <AppText variant="body">
+          {count} new job{count > 1 ? "s" : ""} near you today.
+        </AppText>
+      </View>
+    </AppCard>
+  );
+}
 
 function FeedViewComponent({
   items,
   loading,
+  loadingMore = false,
+  hasMore = false,
+  onLoadMore,
   premium,
   requestedScope,
+  effectiveScope,
   setRequestedScope,
   dailyPulseCount = 0,
   navigation,
   refresh,
+  refreshing = false,
+  error = null,
   isGuest,
+  isPremium,
+  hasValidLocation,
+  isNationalLocked,
+  onOpenPremium,
+  onOpenLocation,
 }: Props) {
-  const isPremium = premium?.active === true;
+  const { theme } = useTheme();
+
   const isEmpty = !loading && items.length === 0;
-
-  const showUpgradeCTA = isGuest;
-  const showRenewCTA = !isGuest && !isPremium;
-
-  /* ---------------- Skeleton ---------------- */
+  const showInitialSkeleton = loading && items.length === 0;
+  const shouldShowGuestHero = isGuest;
+  const shouldShowPremiumUpsell = !isGuest && isNationalLocked;
 
   const skeletonData = useMemo(
     () =>
-      Array.from({ length: 6 }).map((_, i) => ({
-        id: `skeleton-${i}`,
+      Array.from({ length: 6 }, (_, index) => ({
+        id: `feed-skeleton-${index}`,
         __skeleton: true as const,
       })),
     [],
   );
 
-  const showSkeleton = loading && items.length === 0;
+  const data: ListItem[] = showInitialSkeleton ? skeletonData : items;
 
-  const data: ListItem[] = useMemo(
-    () => (showSkeleton ? skeletonData : items),
-    [showSkeleton, skeletonData, items],
+  const listContentStyle = useMemo<ViewStyle>(
+    () => ({
+      paddingTop: theme.spacing.sm,
+      paddingBottom: theme.spacing.xxxl + theme.layout.bottomBarHeight,
+      paddingHorizontal: theme.spacing.screenX,
+    }),
+    [
+      theme.layout.bottomBarHeight,
+      theme.spacing.screenX,
+      theme.spacing.sm,
+      theme.spacing.xxxl,
+    ],
   );
 
   const renderItem = useCallback(
     ({ item }: { item: ListItem }) => {
-      if ("__skeleton" in item) return <JobCardSkeleton />;
+      if ("__skeleton" in item) {
+        return <SkeletonCard />;
+      }
+
       return (
         <FeedList item={item} navigation={navigation} isPremium={isPremium} />
       );
@@ -87,261 +153,267 @@ function FeedViewComponent({
 
   const keyExtractor = useCallback((item: ListItem) => item.id, []);
 
-  /* ---------------- Header ---------------- */
+  const handleEndReached = useCallback(() => {
+    if (!loading && !loadingMore && hasMore && onLoadMore) {
+      onLoadMore();
+    }
+  }, [loading, loadingMore, hasMore, onLoadMore]);
 
-  const ListHeader = useMemo(() => {
+  const listFooter = useMemo(() => {
+    if (!loadingMore) {
+      return <View style={{ height: theme.spacing.md }} />;
+    }
+
     return (
-      <>
-        {/* PREMIUM STRIP */}
-        {isPremium && (
-          <View style={styles.premiumStrip}>
-            <Text style={styles.premiumStripText}>
-              ⭐ Premium Access · Nationwide Jobs
-            </Text>
-          </View>
-        )}
-
-        {/* PREMIUM INFO CARD */}
-        {isPremium && (
-          <View style={styles.premiumBanner}>
-            <Text style={styles.premiumTitle}>Premium Active</Text>
-
-            {premium?.phone && (
-              <Text style={styles.premiumPhone}>{premium.phone}</Text>
-            )}
-
-            <Text style={styles.premiumExpiry}>
-              {premium?.days_remaining} day
-              {premium?.days_remaining !== 1 ? "s" : ""} remaining
-            </Text>
-          </View>
-        )}
-
-        {/* Guest CTA */}
-        {showUpgradeCTA && (
-          <PremiumUpgradeCard
-            onPress={() => navigation.getParent()?.navigate("Premium")}
-          />
-        )}
-
-        {/* Expired CTA */}
-        {showRenewCTA && (
-          <PremiumUpgradeCard
-            onPress={() => navigation.getParent()?.navigate("Premium")}
-          />
-        )}
-
-        {/* Scope Toggle */}
-        {isPremium && setRequestedScope && (
-          <View style={styles.toggleRow}>
-            <Pressable
-              onPress={() => setRequestedScope("local")}
-              style={[
-                styles.toggleBtn,
-                requestedScope === "local" && styles.toggleActive,
-              ]}
-            >
-              <Text
-                style={[
-                  styles.toggleText,
-                  requestedScope === "local" && styles.toggleTextActive,
-                ]}
-              >
-                My District
-              </Text>
-            </Pressable>
-
-            <Pressable
-              onPress={() => setRequestedScope("national")}
-              style={[
-                styles.toggleBtn,
-                requestedScope === "national" && styles.toggleActive,
-              ]}
-            >
-              <Text
-                style={[
-                  styles.toggleText,
-                  requestedScope === "national" && styles.toggleTextActive,
-                ]}
-              >
-                National
-              </Text>
-            </Pressable>
-          </View>
-        )}
-
-        {/* Pulse */}
-        {dailyPulseCount > 0 && (
-          <View style={styles.pulseBox}>
-            <Text style={styles.pulseText}>
-              🔔 {dailyPulseCount} new job
-              {dailyPulseCount > 1 ? "s" : ""} near you today
-            </Text>
-          </View>
-        )}
-
-        {/* Empty */}
-        {isEmpty && (
-          <View style={styles.emptyContainer}>
-            <Text style={styles.emptyTitle}>No jobs found</Text>
-            <Text style={styles.emptySubtitle}>
-              {isGuest
-                ? "Upgrade to unlock jobs across Uganda."
-                : isPremium
-                  ? "Check back later."
-                  : "Premium expired. Renew to unlock nationwide jobs."}
-            </Text>
-          </View>
-        )}
-      </>
+      <View
+        style={{
+          paddingVertical: theme.spacing.xl,
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        <ActivityIndicator color={theme.colors.primary} />
+        <AppText
+          variant="caption"
+          tone="secondary"
+          weight="600"
+          style={{ marginTop: theme.spacing.xs }}
+        >
+          Loading more jobs…
+        </AppText>
+      </View>
     );
   }, [
-    isPremium,
-    premium,
-    showUpgradeCTA,
-    showRenewCTA,
-    requestedScope,
-    setRequestedScope,
-    dailyPulseCount,
-    isEmpty,
-    navigation,
-    isGuest,
+    loadingMore,
+    theme.colors.primary,
+    theme.spacing.md,
+    theme.spacing.xl,
+    theme.spacing.xs,
   ]);
 
+  const emptyBlock = useMemo(() => {
+    if (!isEmpty) return null;
+
+    if (error) {
+      return (
+        <EmptyState
+          title="Could not load jobs"
+          message={error}
+          action={
+            refresh ? (
+              <AppButton
+                title="Try Again"
+                onPress={refresh}
+                variant="primary"
+              />
+            ) : undefined
+          }
+        />
+      );
+    }
+
+    if (effectiveScope === "local" && !hasValidLocation) {
+      return (
+        <EmptyState
+          title="No local jobs yet"
+          message="Set your location to help AwoJobs show jobs closer to you."
+          action={
+            <AppButton
+              title="Choose Location"
+              onPress={onOpenLocation}
+              variant="primary"
+            />
+          }
+        />
+      );
+    }
+
+    if (effectiveScope === "national") {
+      return (
+        <EmptyState
+          title="No jobs found nationwide"
+          message="There are no jobs to show across Uganda right now. Check back again later."
+        />
+      );
+    }
+
+    return (
+      <EmptyState
+        title="No jobs found"
+        message="We could not find jobs for this area right now. Try refreshing, changing location, or checking again later."
+        action={
+          <AppButton
+            title="Change Location"
+            onPress={onOpenLocation}
+            variant="secondary"
+          />
+        }
+      />
+    );
+  }, [
+    effectiveScope,
+    error,
+    hasValidLocation,
+    isEmpty,
+    onOpenLocation,
+    refresh,
+  ]);
+
+  const scopeHelpText = useMemo(() => {
+    if (isGuest) {
+      return "Sign in to browse jobs across Uganda.";
+    }
+
+    if (isNationalLocked) {
+      return "Upgrade to premium to browse jobs across Uganda.";
+    }
+
+    if (effectiveScope === "national") {
+      return "Showing jobs across Uganda.";
+    }
+
+    return "Showing jobs near your selected location.";
+  }, [effectiveScope, isGuest, isNationalLocked]);
+
+  const listHeader = useMemo(() => {
+    return (
+      <View style={{ paddingBottom: theme.spacing.lg }}>
+        <View style={{ marginBottom: theme.spacing.lg }}>
+          {shouldShowGuestHero ? (
+            <View style={{ marginBottom: theme.spacing.md }}>
+              <PremiumUpgradeCard onPress={onOpenPremium} />
+            </View>
+          ) : null}
+
+          {shouldShowPremiumUpsell ? (
+            <AppCard variant="premium" padding="lg">
+              <AppText variant="title" weight="700">
+                Unlock national jobs
+              </AppText>
+              <AppText
+                variant="bodySm"
+                tone="secondary"
+                style={{ marginTop: theme.spacing.xs }}
+              >
+                Upgrade to premium to browse jobs across Uganda.
+              </AppText>
+              <View style={{ marginTop: theme.spacing.md }}>
+                <AppButton
+                  title="See Premium"
+                  onPress={onOpenPremium}
+                  variant="primary"
+                />
+              </View>
+            </AppCard>
+          ) : null}
+        </View>
+
+        {error && items.length > 0 ? (
+          <View style={{ marginBottom: theme.spacing.lg }}>
+            <AppCard variant="muted" padding="md">
+              <AppText variant="bodySm" tone="error">
+                {error}
+              </AppText>
+            </AppCard>
+          </View>
+        ) : null}
+
+        {setRequestedScope ? (
+          <View style={{ marginBottom: theme.spacing.lg }}>
+            <AppText
+              variant="labelLg"
+              tone="secondary"
+              weight="700"
+              style={{ marginBottom: theme.spacing.sm }}
+            >
+              Browse Scope
+            </AppText>
+
+            <SegmentedControl
+              value={requestedScope}
+              onChange={setRequestedScope}
+              options={[
+                { label: "My District", value: "local" },
+                {
+                  label: "National",
+                  value: "national",
+                  disabled: isGuest || isNationalLocked,
+                },
+              ]}
+            />
+
+            <AppText
+              variant="caption"
+              tone="tertiary"
+              style={{ marginTop: theme.spacing.xs }}
+            >
+              {scopeHelpText}
+            </AppText>
+          </View>
+        ) : null}
+
+        {dailyPulseCount > 0 && !showInitialSkeleton ? (
+          <View style={{ marginBottom: theme.spacing.lg }}>
+            <DailyPulseCard count={dailyPulseCount} />
+          </View>
+        ) : null}
+      </View>
+    );
+  }, [
+    dailyPulseCount,
+    error,
+    effectiveScope,
+    isGuest,
+    isNationalLocked,
+    items.length,
+    onOpenPremium,
+    requestedScope,
+    scopeHelpText,
+    setRequestedScope,
+    shouldShowGuestHero,
+    shouldShowPremiumUpsell,
+    showInitialSkeleton,
+    theme.spacing.lg,
+    theme.spacing.md,
+    theme.spacing.sm,
+    theme.spacing.xs,
+  ]);
+
+  const listEmptyComponent = useMemo(() => {
+    if (showInitialSkeleton) return null;
+    return emptyBlock;
+  }, [emptyBlock, showInitialSkeleton]);
+
   return (
-    <View style={[styles.container, isPremium && styles.premiumBackground]}>
+    <AppScreen padded={false} keyboardAvoiding={false}>
       <FlatList
         data={data}
         keyExtractor={keyExtractor}
         renderItem={renderItem}
-        ListHeaderComponent={ListHeader}
-        contentContainerStyle={styles.listContent}
-        removeClippedSubviews
+        ListHeaderComponent={listHeader}
+        ListEmptyComponent={listEmptyComponent}
+        ListFooterComponent={listFooter}
+        contentContainerStyle={listContentStyle}
         initialNumToRender={6}
         maxToRenderPerBatch={6}
         updateCellsBatchingPeriod={40}
         windowSize={5}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
+        onEndReached={handleEndReached}
+        onEndReachedThreshold={0.45}
         refreshControl={
           refresh ? (
             <RefreshControl
-              refreshing={loading && items.length > 0}
+              refreshing={refreshing}
               onRefresh={refresh}
+              tintColor={theme.colors.primary}
             />
           ) : undefined
         }
       />
-    </View>
+    </AppScreen>
   );
 }
 
 export default memo(FeedViewComponent);
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: "#F6F8FC",
-  },
-
-  premiumBackground: {
-    backgroundColor: "#FDFCF8", // subtle warm tone
-  },
-
-  premiumStrip: {
-    backgroundColor: "#111827",
-    paddingVertical: 8,
-    alignItems: "center",
-  },
-  premiumStripText: {
-    color: "#FFFFFF",
-    fontWeight: "700",
-    fontSize: 12,
-    letterSpacing: 0.5,
-  },
-
-  premiumBanner: {
-    margin: 16,
-    padding: 16,
-    borderRadius: 16,
-    backgroundColor: "#FEF3C7",
-    borderWidth: 1,
-    borderColor: "#FACC15",
-  },
-  premiumTitle: {
-    fontWeight: "800",
-    fontSize: 15,
-    color: "#92400E",
-  },
-  premiumPhone: {
-    marginTop: 4,
-    fontWeight: "600",
-  },
-  premiumExpiry: {
-    marginTop: 6,
-    fontSize: 12,
-    opacity: 0.8,
-  },
-
-  toggleRow: {
-    flexDirection: "row",
-    marginHorizontal: 16,
-    marginBottom: 12,
-    backgroundColor: "#E2E8F0",
-    borderRadius: 14,
-    padding: 4,
-  },
-  toggleBtn: {
-    flex: 1,
-    paddingVertical: 8,
-    alignItems: "center",
-    borderRadius: 10,
-  },
-  toggleActive: {
-    backgroundColor: "#1E293B",
-  },
-  toggleText: {
-    fontWeight: "700",
-    color: "#334155",
-  },
-  toggleTextActive: {
-    color: "#FFFFFF",
-  },
-
-  listContent: {
-    paddingHorizontal: 16,
-    paddingBottom: 140,
-  },
-
-  pulseBox: {
-    backgroundColor: "#EEF2FF",
-    borderRadius: 16,
-    padding: 14,
-    marginHorizontal: 16,
-    marginBottom: 10,
-    borderLeftWidth: 4,
-    borderLeftColor: "#2563EB",
-  },
-  pulseText: {
-    fontWeight: "800",
-    color: "#1E3A8A",
-  },
-
-  emptyContainer: {
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 40,
-    paddingVertical: 40,
-  },
-  emptyTitle: {
-    fontSize: 18,
-    fontWeight: "800",
-    color: "#0F172A",
-    marginBottom: 8,
-  },
-  emptySubtitle: {
-    fontSize: 14,
-    color: "#64748B",
-    textAlign: "center",
-  },
-});

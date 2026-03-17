@@ -1,6 +1,17 @@
 import { supabase } from "../core/supabase";
 import { validateJob } from "./jobs.validation";
-import { ENV } from "../core/config";
+
+function normalizeUgPhone(phone?: string | null) {
+  if (!phone) return null;
+
+  const digits = phone.replace(/\D/g, "");
+
+  if (digits.startsWith("256")) return `+${digits}`;
+  if (digits.startsWith("0")) return `+256${digits.slice(1)}`;
+  if (digits.length === 9) return `+256${digits}`;
+
+  return null;
+}
 
 export async function updateJob(
   jobId: string,
@@ -10,8 +21,7 @@ export async function updateJob(
     pay_type: "daily" | "weekly" | "monthly";
     contact_method: "call" | "whatsapp" | "walk_in" | "in_app";
     contact_phone?: string;
-    expires_at: Date;
-  },
+  }
 ) {
   validateJob({
     title: params.title,
@@ -19,47 +29,30 @@ export async function updateJob(
     pay_type: params.pay_type,
     contact_method: params.contact_method,
     contact_phone: params.contact_phone,
-    expires_at: params.expires_at,
   });
 
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
+  const normalizedPhone =
+    params.contact_method === "call" ||
+    params.contact_method === "whatsapp"
+      ? normalizeUgPhone(params.contact_phone)
+      : null;
 
-  if (!session?.access_token) {
-    throw new Error("Not authenticated");
+  const { data, error } = await supabase
+    .from("jobs")
+    .update({
+      title: params.title.trim(),
+      description: params.description?.trim() ?? null,
+      pay_type: params.pay_type,
+      contact_method: params.contact_method,
+      contact_phone: normalizedPhone,
+    })
+    .eq("id", jobId)
+    .select()
+    .single();
+
+  if (error) {
+    throw new Error(error.message || "Unable to update job");
   }
 
-  const res = await fetch(
-    `${ENV.SUPABASE_URL}/functions/v1/update_job`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${session.access_token}`,
-      },
-      body: JSON.stringify({
-        job_id: jobId,
-        update: {
-          title: params.title.trim(),
-          description: params.description?.trim() ?? null,
-          pay_type: params.pay_type,
-          contact_method: params.contact_method,
-          contact_phone:
-            params.contact_method === "call" ||
-            params.contact_method === "whatsapp"
-              ? params.contact_phone?.trim()
-              : null,
-          expires_at: params.expires_at.toISOString(),
-        },
-      }),
-    },
-  );
-
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(text || "Unable to update job");
-  }
-
-  return await res.json();
+  return data;
 }

@@ -1,7 +1,4 @@
-// src/navigation/FeedNavigator.ts
-
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
-import { useMemo } from "react";
 
 import FeedScreen from "../screens/feed/FeedScreen";
 import JobDetailScreen from "../screens/feed/JobDetailScreen";
@@ -11,32 +8,35 @@ export type FeedStackParamList = {
   Feed: undefined;
   JobDetail: {
     jobId: string;
-    // Keep optional lightweight preview for instant paint
-    preview?: Pick<Job, "title" | "pay_type" | "location_id">;
+    preview?: Partial<Job>;
   };
 };
 
 const Stack = createNativeStackNavigator<FeedStackParamList>();
 
 export function FeedNavigator() {
-  const screenOptions = useMemo(
-    () => ({
-      headerShown: false,
-      animation: "fade", // smoother + lighter than default push
-      animationDuration: 180,
-    }),
-    [],
-  );
-
   return (
     <Stack.Navigator
       initialRouteName="Feed"
-      screenOptions={screenOptions}
-      detachInactiveScreens
+      screenOptions={{
+        headerShown: false,
+      }}
     >
-      <Stack.Screen name="Feed" component={FeedScreen} />
+      <Stack.Screen
+        name="Feed"
+        component={FeedScreen}
+        options={{
+          animation: "fade",
+        }}
+      />
 
-      <Stack.Screen name="JobDetail" component={JobDetailScreen} />
+      <Stack.Screen
+        name="JobDetail"
+        component={JobDetailScreen}
+        options={{
+          animation: "slide_from_right",
+        }}
+      />
     </Stack.Navigator>
   );
 }

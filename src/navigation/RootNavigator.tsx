@@ -1,97 +1,79 @@
-// src/navigation/RootNavigator.tsx
-
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
-import { View, StyleSheet } from "react-native";
-import { useEffect, useRef } from "react";
+import type { NavigatorScreenParams } from "@react-navigation/native";
 
 import { AppTabsNavigator } from "./AppTabsNavigator";
 import { AuthNavigator } from "./AuthNavigator";
+import type { AuthStackParamList } from "./AuthNavigator";
 import ManualLocationScreen from "../screens/location/ManualLocationScreen";
 import PremiumScreen from "../screens/premium/PremiumScreen";
+import PremiumPaymentScreen from "../screens/premium/PremiumPaymentScreen";
 
 import { useSession } from "../state/useSession";
 import { useProfile } from "../state/useProfile";
-import { consumePendingIntent } from "../intent/intent.store";
+import { useTheme } from "../theme/useTheme";
 
 export type RootStackParamList = {
   App: undefined;
+  AuthModal: NavigatorScreenParams<AuthStackParamList>;
   ManualLocation: undefined;
-  AuthModal: undefined;
   Premium: undefined;
+  PremiumPayment: {
+    purpose: "premium_1_day" | "premium_7_days" | "premium_30_days";
+    planLabel: string;
+    amount: number;
+    intentId?: string | null;
+    paymentReference?: string | null;
+  };
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
-function SplashScreen() {
-  return <View style={styles.splash} />;
-}
-
 export function RootNavigator() {
-  const { session, loading: sessionLoading } = useSession();
+  const { theme } = useTheme();
+  const { session } = useSession();
+
   const userId = session?.user?.id ?? null;
+  const { profile, isSuspended } = useProfile(userId);
 
-  const { profile, loading: profileLoading } = useProfile(
-    session ? userId : null,
-  );
-
-  const isHydrating = sessionLoading || (session !== null && profileLoading);
-
-  const intentHandledRef = useRef(false);
-
-  /* =====================================================
-     INTENT RESUME SYSTEM
-  ===================================================== */
-
-  useEffect(() => {
-    if (!session || !profile) return;
-    if (intentHandledRef.current) return;
-
-    const intent = consumePendingIntent();
-    if (!intent) return;
-
-    intentHandledRef.current = true;
-
-    // Delay to avoid navigation race
-    setTimeout(() => {
-      switch (intent.intent) {
-        case "premium":
-          // Open premium modal after registration
-          // (user just registered)
-          break;
-
-        case "post_job":
-          // Employers auto land on employer navigator
-          // No need to navigate manually
-          break;
-
-        case "saved_jobs":
-          // Tabs handle this automatically
-          break;
-
-        default:
-          break;
-      }
-    }, 50);
-  }, [session, profile]);
-
-  if (isHydrating) {
-    return <SplashScreen />;
-  }
+  const isAuthenticated = Boolean(session);
+  const resolvedProfile = profile && !isSuspended ? profile : null;
 
   return (
     <Stack.Navigator
       screenOptions={{
         headerShown: false,
-        animation: "fade",
+        animation: "default",
+        contentStyle: { backgroundColor: theme.colors.bgApp },
       }}
     >
       <Stack.Screen name="App">
         {(props) => (
-          <AppTabsNavigator {...props} session={session} profile={profile} />
+          <AppTabsNavigator
+            {...props}
+            session={session}
+            profile={resolvedProfile}
+          />
         )}
       </Stack.Screen>
 
-      <Stack.Screen name="ManualLocation" component={ManualLocationScreen} />
+      {!isAuthenticated ? (
+        <Stack.Screen
+          name="AuthModal"
+          component={AuthNavigator}
+          options={{
+            presentation: "modal",
+            animation: "slide_from_bottom",
+          }}
+        />
+      ) : null}
+
+      <Stack.Screen
+        name="ManualLocation"
+        component={ManualLocationScreen}
+        options={{
+          animation: "slide_from_right",
+        }}
+      />
 
       <Stack.Screen
         name="Premium"
@@ -103,20 +85,13 @@ export function RootNavigator() {
       />
 
       <Stack.Screen
-        name="AuthModal"
-        component={AuthNavigator}
+        name="PremiumPayment"
+        component={PremiumPaymentScreen}
         options={{
-          presentation: "modal",
-          animation: "slide_from_bottom",
+          presentation: "card",
+          animation: "slide_from_right",
         }}
       />
     </Stack.Navigator>
   );
 }
-
-const styles = StyleSheet.create({
-  splash: {
-    flex: 1,
-    backgroundColor: "#ffffff",
-  },
-});

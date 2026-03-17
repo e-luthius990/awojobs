@@ -4,7 +4,7 @@ import * as Notifications from "expo-notifications";
 import { supabase } from "../core/supabase";
 
 /* =====================================================
-   SET PUSH OPT-IN (RPC VERSION)
+   SET PUSH OPT-IN (DIRECT UPDATE)
 ===================================================== */
 
 export async function setPushOptIn(enabled: boolean) {
@@ -12,11 +12,12 @@ export async function setPushOptIn(enabled: boolean) {
     data: { session },
   } = await supabase.auth.getSession();
 
-  if (!session) {
+  if (!session?.user?.id) {
     throw new Error("Not authenticated.");
   }
 
   const { status } = await Notifications.getPermissionsAsync();
+
   if (status !== "granted") {
     throw new Error("Notification permission not granted.");
   }
@@ -30,14 +31,15 @@ export async function setPushOptIn(enabled: boolean) {
     throw new Error("Unable to obtain push token.");
   }
 
-  const { error } = await supabase.rpc("set_push_pref", {
-    p_expo_push_token: token,
-    p_push_opt_in: enabled,
-  });
+  const { error } = await supabase
+    .from("device_push_tokens")
+    .update({ push_opt_in: enabled })
+    .eq("expo_push_token", token)
+    .eq("user_id", session.user.id);
 
   if (error) {
     if (__DEV__) {
-      console.warn("[Push RPC] Failed");
+      console.warn("[Push] Failed to update preference");
     }
     throw new Error("Failed to update notification preference.");
   }

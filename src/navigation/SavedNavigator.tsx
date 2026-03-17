@@ -1,32 +1,42 @@
-// src/navigation/SavedNavigator.ts
-
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
-import { useMemo } from "react";
 
-import SavedJobsScreen from "../screens/saved/SavedJobsScreen";
+import SavedJobsScreen from "../screens/job/SavedJobsScreen";
+import JobDetailScreen from "../screens/feed/JobDetailScreen";
+import type { Job } from "../jobs/jobs.types";
 
 export type SavedStackParamList = {
   SavedJobs: undefined;
+
+  JobDetail: {
+    jobId: string;
+    preview?: Partial<Job>;
+  };
 };
 
 const Stack = createNativeStackNavigator<SavedStackParamList>();
 
 export function SavedNavigator() {
-  const screenOptions = useMemo(
-    () => ({
-      headerBackTitleVisible: false,
-      animation: "fade",
-      animationDuration: 180,
-    }),
-    [],
-  );
-
   return (
-    <Stack.Navigator screenOptions={screenOptions} detachInactiveScreens>
+    <Stack.Navigator
+      initialRouteName="SavedJobs"
+      screenOptions={{
+        headerShown: false,
+      }}
+    >
       <Stack.Screen
         name="SavedJobs"
         component={SavedJobsScreen}
-        options={{ title: "Saved jobs" }}
+        options={{
+          animation: "fade",
+        }}
+      />
+
+      <Stack.Screen
+        name="JobDetail"
+        component={JobDetailScreen}
+        options={{
+          animation: "slide_from_right",
+        }}
       />
     </Stack.Navigator>
   );

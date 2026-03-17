@@ -1,216 +1,77 @@
-import React, { useMemo } from "react";
-import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
-import { Ionicons } from "@expo/vector-icons";
-import { View, StyleSheet } from "react-native";
+import React from "react";
+import { ActivityIndicator, View } from "react-native";
+import { Session } from "@supabase/supabase-js";
 
-import { FeedNavigator } from "./FeedNavigator";
-import { SettingsNavigator } from "./SettingsNavigator";
-import { AuthNavigator } from "./AuthNavigator";
+import { GuestNavigator } from "./GuestNavigator";
+import { JobSeekerNavigator } from "./JobSeekerNavigator";
 import { EmployerNavigator } from "./EmployerNavigator";
-import SavedJobsScreen from "../screens/job/SavedJobsScreen";
-
-import { useSavedCount } from "../state/useSavedCount";
+import ModeratorNavigator from "./ModeratorNavigator";
+import { SuperAdminNavigator } from "./SuperAdminNavigator";
+import { useTheme } from "../theme/useTheme";
+import { UserProfile } from "../types/user";
 
 type Props = {
-  session: any;
-  profile: any;
+  session: Session | null;
+  profile: UserProfile | null;
 };
 
-const Tab = createBottomTabNavigator();
+type AppRole = "job_seeker" | "employer" | "moderator" | "super_admin" | null;
 
-const COLORS = {
-  bg: "#FFFFFF",
-  border: "#E5E7EB",
-  muted: "#94A3B8",
-  text: "#111827",
-  primary: "#2563EB",
-};
+function resolveRole(profile: UserProfile | null): AppRole {
+  const value = profile?.role;
 
-export function AppTabsNavigator({ session, profile }: Props) {
-  const savedCount = useSavedCount();
+  if (
+    value === "job_seeker" ||
+    value === "employer" ||
+    value === "moderator" ||
+    value === "super_admin"
+  ) {
+    return value;
+  }
 
-  const isAuthenticated = !!session;
-  const role = profile?.role ?? null;
+  return null;
+}
 
-  const isEmployer = role === "employer";
-  const isJobSeeker = role === "job_seeker";
-
-  /* =====================================================
-     POST TAB RESOLUTION
-  ===================================================== */
-
-  const PostComponent = useMemo(() => {
-    if (isEmployer) {
-      return EmployerNavigator;
-    }
-
-    // Guest → Login
-    if (!isAuthenticated) {
-      return AuthNavigator;
-    }
-
-    // JobSeeker → cannot post jobs
-    return AuthNavigator;
-  }, [isEmployer, isAuthenticated]);
-
-  const savedBadge = useMemo(() => {
-    if (!isAuthenticated) return undefined;
-    if (!savedCount || savedCount <= 0) return undefined;
-    return savedCount;
-  }, [isAuthenticated, savedCount]);
+function RoleResolutionFallback() {
+  const { theme } = useTheme();
 
   return (
-    <Tab.Navigator
-      screenOptions={{
-        headerShown: false,
-        tabBarStyle: styles.tabBar,
-        tabBarItemStyle: styles.item,
-        tabBarLabelStyle: styles.label,
-        tabBarIconStyle: styles.iconStyle,
-        tabBarActiveTintColor: COLORS.text,
-        tabBarInactiveTintColor: COLORS.muted,
+    <View
+      style={{
+        flex: 1,
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: theme.colors.bgApp,
       }}
     >
-      {/* ================= FEED ================= */}
-      <Tab.Screen
-        name="FeedTab"
-        component={FeedNavigator}
-        options={{
-          title: "Jobs",
-          tabBarIcon: ({ focused }) => (
-            <View style={styles.iconSlot}>
-              <View style={[styles.pill, focused && styles.pillActive]}>
-                <Ionicons
-                  name={focused ? "briefcase" : "briefcase-outline"}
-                  size={22}
-                  color={focused ? "#FFFFFF" : COLORS.muted}
-                />
-              </View>
-            </View>
-          ),
-        }}
-      />
-
-      {/* ================= SAVED ================= */}
-      {isAuthenticated && isJobSeeker && (
-        <Tab.Screen
-          name="SavedTab"
-          component={SavedJobsScreen}
-          options={{
-            title: "Saved",
-            tabBarBadge: savedBadge,
-            tabBarIcon: ({ focused }) => (
-              <View style={styles.iconSlot}>
-                <View style={[styles.pill, focused && styles.pillActive]}>
-                  <Ionicons
-                    name={focused ? "star" : "star-outline"}
-                    size={22}
-                    color={focused ? "#FFFFFF" : COLORS.muted}
-                  />
-                </View>
-              </View>
-            ),
-          }}
-        />
-      )}
-
-      {/* ================= POST ================= */}
-      <Tab.Screen
-        name="PostJobTab"
-        component={PostComponent}
-        options={{
-          title: "Post",
-          tabBarIcon: () => (
-            <View style={styles.iconSlot}>
-              <View style={styles.postWrap}>
-                <View style={styles.postButton}>
-                  <Ionicons name="add" size={20} color="#FFFFFF" />
-                </View>
-              </View>
-            </View>
-          ),
-        }}
-      />
-
-      {/* ================= SETTINGS ================= */}
-      {isAuthenticated && (
-        <Tab.Screen
-          name="SettingsTab"
-          component={SettingsNavigator}
-          options={{
-            title: "Settings",
-            tabBarIcon: ({ focused }) => (
-              <View style={styles.iconSlot}>
-                <View style={[styles.pill, focused && styles.pillActive]}>
-                  <Ionicons
-                    name={focused ? "settings" : "settings-outline"}
-                    size={22}
-                    color={focused ? "#FFFFFF" : COLORS.muted}
-                  />
-                </View>
-              </View>
-            ),
-          }}
-        />
-      )}
-    </Tab.Navigator>
+      <ActivityIndicator color={theme.colors.primary} />
+    </View>
   );
 }
 
-const styles = StyleSheet.create({
-  tabBar: {
-    height: 85,
-    paddingTop: 8,
-    paddingBottom: 10,
-    backgroundColor: COLORS.bg,
-    borderTopWidth: 1,
-    borderTopColor: COLORS.border,
-    elevation: 18,
-    shadowColor: "#000",
-    shadowOpacity: 0.06,
-    shadowRadius: 18,
-    shadowOffset: { width: 0, height: -6 },
-  },
-  item: {
-    justifyContent: "center",
-    alignItems: "center",
-    paddingVertical: 2,
-  },
-  iconStyle: {
-    marginTop: 0,
-  },
-  label: {
-    fontSize: 12,
-    fontWeight: "800",
-    marginTop: 10,
-  },
-  iconSlot: {
-    height: 44,
-    width: 64,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  pill: {
-    width: 42,
-    height: 42,
-    borderRadius: 14,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "transparent",
-  },
-  pillActive: {
-    backgroundColor: COLORS.primary,
-  },
-  postWrap: {
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  postButton: {
-    width: 50,
-    height: 50,
-    borderRadius: 18,
-    backgroundColor: COLORS.primary,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-});
+export function AppTabsNavigator({ session, profile }: Props) {
+  const isAuthenticated = Boolean(session);
+
+  if (!isAuthenticated) {
+    return <GuestNavigator />;
+  }
+
+  const role = resolveRole(profile);
+
+  switch (role) {
+    case "job_seeker":
+      return <JobSeekerNavigator />;
+
+    case "employer":
+      return <EmployerNavigator />;
+
+    case "moderator":
+      return <ModeratorNavigator />;
+
+    case "super_admin":
+      return <SuperAdminNavigator />;
+
+    default:
+      return <RoleResolutionFallback />;
+  }
+}

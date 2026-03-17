@@ -5,8 +5,6 @@ const config: ExpoConfig = {
   name: "AwoJobs",
   slug: "awojobs",
   scheme: "awojobs",
-
-  sdkVersion: "55.0.0",
   version: "1.0.0",
 
   orientation: "portrait",
@@ -15,7 +13,7 @@ const config: ExpoConfig = {
   splash: {
     image: "./assets/splash.png",
     resizeMode: "contain",
-    backgroundColor: "#0F172A",
+    backgroundColor: "#F7F9FC",
   },
 
   android: {
@@ -23,7 +21,7 @@ const config: ExpoConfig = {
     googleServicesFile: "./google-services.json",
     adaptiveIcon: {
       foregroundImage: "./assets/adaptive-icon.png",
-      backgroundColor: "#0F172A",
+      backgroundColor: "#F7F9FC",
     },
   },
 
@@ -43,13 +41,12 @@ const config: ExpoConfig = {
   },
 
   runtimeVersion: {
-    policy: "sdkVersion",
+    policy: "appVersion",
   },
 
   extra: {
     SUPABASE_URL: process.env.EXPO_PUBLIC_SUPABASE_URL,
     SUPABASE_ANON_KEY: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY,
-
     eas: {
       projectId: "3381d51f-b9a7-4ae7-a442-77f7e9986e1d",
     },

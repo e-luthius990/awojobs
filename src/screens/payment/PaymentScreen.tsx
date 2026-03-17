@@ -1,10 +1,24 @@
-import React, { useEffect, useState } from "react";
-import { View, Text, Pressable, ActivityIndicator, Alert } from "react-native";
-import { supabase } from "../../core/supabase";
+import React, { useMemo, useState, useCallback, type ViewStyle } from "react";
+import { View } from "react-native";
+import { useNavigation, useRoute, RouteProp } from "@react-navigation/native";
+import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 
-/* =====================================================
-   TYPES
-===================================================== */
+import { supabase } from "../../core/supabase";
+import type { PostJobStackParamList } from "../../navigation/PostJobNavigator";
+
+import { useTheme } from "../../theme/useTheme";
+import { AppScreen } from "../../ui/AppScreen";
+import { AppHeader } from "../../ui/AppHeader";
+import { AppText } from "../../ui/AppText";
+import { AppCard } from "../../ui/AppCard";
+import { AppButton } from "../../ui/AppButton";
+import { InlineAlert } from "../../ui/InlineAlert";
+import { StatusBadge } from "../../ui/StatusBadge";
+
+/* ================= TYPES ================= */
+
+type RouteProps = RouteProp<PostJobStackParamList, "Payment">;
+type NavProps = NativeStackNavigationProp<PostJobStackParamList, "Payment">;
 
 type Sponsorship =
   | null
@@ -12,11 +26,7 @@ type Sponsorship =
   | "sponsored_week"
   | "sponsored_month";
 
-type PaymentMode = "create" | "renew";
-
-/* =====================================================
-   DISPLAY PRICES (SERVER REVALIDATES)
-===================================================== */
+/* ================= PRICES ================= */
 
 const PRICES = {
   job_post: 2000,
@@ -25,282 +35,356 @@ const PRICES = {
   sponsored_month: 25000,
 } as const;
 
-/* =====================================================
-   SCREEN
-===================================================== */
+const SPONSOR_OPTIONS: {
+  value: Exclude<Sponsorship, null>;
+  label: string;
+  description: string;
+  price: number;
+  popular?: boolean;
+}[] = [
+  {
+    value: "sponsored_day",
+    label: "1 Day Boost",
+    description: "Short-term extra visibility in the feed.",
+    price: PRICES.sponsored_day,
+  },
+  {
+    value: "sponsored_week",
+    label: "1 Week Boost",
+    description: "Best balance for stronger visibility and response volume.",
+    price: PRICES.sponsored_week,
+    popular: true,
+  },
+  {
+    value: "sponsored_month",
+    label: "1 Month Boost",
+    description: "Extended visibility for hard-to-fill or ongoing roles.",
+    price: PRICES.sponsored_month,
+  },
+];
 
-export default function PaymentScreen({ route, navigation }: any) {
-  const params = route?.params ?? {};
+type CreateJobIntentResponse = {
+  intent_id?: string | null;
+  error?: string | null;
+  message?: string | null;
+};
 
-  const jobDraft = params.jobDraft;
-  const mode: PaymentMode = params.mode === "renew" ? "renew" : "create";
-  const jobId: string | undefined = params.jobId;
+function formatCurrency(amount: number) {
+  return `UGX ${amount.toLocaleString()}`;
+}
+
+/* ================= SCREEN ================= */
+
+export default function PaymentScreen() {
+  const route = useRoute<RouteProps>();
+  const navigation = useNavigation<NavProps>();
+  const { theme } = useTheme();
+
+  const { draftId, mode = "create" } = route.params;
 
   const [sponsorship, setSponsorship] = useState<Sponsorship>(null);
   const [loading, setLoading] = useState(false);
-  const [valid, setValid] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  /* ---------------------------------------------
-     VALIDATE PARAMS SAFELY
-  ---------------------------------------------- */
-  useEffect(() => {
-    if (
-      !jobDraft ||
-      typeof jobDraft.title !== "string" ||
-      !jobDraft.pay_type ||
-      !jobDraft.contact_method ||
-      !jobDraft.expires_at ||
-      !jobDraft.location_id
-    ) {
-      setValid(false);
-      Alert.alert("Invalid job data", "Please start posting again.", [
-        {
-          text: "OK",
-          onPress: () => navigation.popToTop(),
-        },
-      ]);
-    }
-  }, []);
+  const total = useMemo(() => {
+    const base = PRICES.job_post;
+    return base + (sponsorship ? PRICES[sponsorship] : 0);
+  }, [sponsorship]);
 
-  if (!valid) return null;
+  const selectedBoost = useMemo(
+    () =>
+      SPONSOR_OPTIONS.find((option) => option.value === sponsorship) ?? null,
+    [sponsorship],
+  );
 
-  /* ---------------------------------------------
-     TOTAL (DISPLAY ONLY)
-  ---------------------------------------------- */
-  const total = PRICES.job_post + (sponsorship ? PRICES[sponsorship] : 0);
+  const payButtonLabel = mode === "renew" ? "Pay & Renew" : "Pay & Publish";
 
-  /* ---------------------------------------------
-     CREATE PAYMENT INTENT
-  ---------------------------------------------- */
-  async function proceedToPay() {
+  const contentStyle = useMemo<ViewStyle>(
+    () => ({
+      gap: theme.spacing.lg,
+      paddingBottom: theme.spacing.xxxl,
+    }),
+    [theme.spacing.lg, theme.spacing.xxxl],
+  );
+
+  const heroStyle = useMemo<ViewStyle>(
+    () => ({
+      gap: theme.spacing.sm,
+    }),
+    [theme.spacing.sm],
+  );
+
+  const sectionStyle = useMemo<ViewStyle>(
+    () => ({
+      gap: theme.spacing.md,
+    }),
+    [theme.spacing.md],
+  );
+
+  const rowStyle = useMemo<ViewStyle>(
+    () => ({
+      flexDirection: "row",
+      alignItems: "flex-start",
+      justifyContent: "space-between",
+      gap: theme.spacing.md,
+    }),
+    [theme.spacing.md],
+  );
+
+  const priceBlockStyle = useMemo<ViewStyle>(
+    () => ({
+      alignItems: "flex-end",
+    }),
+    [],
+  );
+
+  const boostListStyle = useMemo<ViewStyle>(
+    () => ({
+      gap: theme.spacing.sm,
+    }),
+    [theme.spacing.sm],
+  );
+
+  const boostCardContentStyle = useMemo<ViewStyle>(
+    () => ({
+      gap: theme.spacing.sm,
+    }),
+    [theme.spacing.sm],
+  );
+
+  const totalRowStyle = useMemo<ViewStyle>(
+    () => ({
+      flexDirection: "row",
+      alignItems: "flex-start",
+      justifyContent: "space-between",
+      gap: theme.spacing.md,
+    }),
+    [theme.spacing.md],
+  );
+
+  const footerActionsStyle = useMemo<ViewStyle>(
+    () => ({
+      gap: theme.spacing.sm,
+    }),
+    [theme.spacing.sm],
+  );
+
+  const proceedToPay = useCallback(async () => {
     if (loading) return;
 
-    setLoading(true);
-
     try {
-      const { error } = await supabase.functions.invoke("create_job_intent", {
-        body: {
-          job: jobDraft,
-          sponsorship,
-          mode,
-          job_id: jobId ?? null,
+      setLoading(true);
+      setError(null);
+
+      const { data, error } = await supabase.functions.invoke(
+        "create_job_intent",
+        {
+          body: {
+            draft_id: draftId,
+            sponsorship,
+            mode,
+          },
         },
-      });
-
-      if (error) throw error;
-
-      navigation.replace("PaymentPending");
-    } catch (e: any) {
-      Alert.alert(
-        "Payment error",
-        e?.message ?? "Unable to process payment. Try again.",
       );
+
+      if (error) {
+        throw error;
+      }
+
+      const payload = (data ?? {}) as CreateJobIntentResponse;
+
+      if (payload.error) {
+        throw new Error(payload.error);
+      }
+
+      if (!payload.intent_id) {
+        throw new Error(payload.message ?? "Invalid payment response.");
+      }
+
+      navigation.replace("PaymentPending", {
+        intentId: payload.intent_id,
+        jobId: draftId,
+        flow: "job_post",
+      });
+    } catch (e: any) {
+      setError(e?.message ?? "Unable to process payment.");
     } finally {
       setLoading(false);
     }
-  }
-
-  /* =====================================================
-     UI
-  ====================================================== */
+  }, [draftId, loading, mode, navigation, sponsorship]);
 
   return (
-    <View style={{ flex: 1, padding: 20, backgroundColor: "#F8F9FB" }}>
-      <Text style={title}>Payment</Text>
-
-      {/* BASE FEE */}
-      <Section>
-        <Row>
-          <Text style={rowText}>Job posting</Text>
-          <Text style={rowText}>UGX {PRICES.job_post}</Text>
-        </Row>
-        <Text style={hint}>Required to publish your job</Text>
-      </Section>
-
-      {/* SPONSORSHIP */}
-      <Section>
-        <Text style={sectionTitle}>Boost visibility (optional)</Text>
-
-        <Text style={hint}>
-          Boosted jobs appear higher and may reach nearby areas.
-        </Text>
-
-        <Option
-          label="1 Day boost"
-          price="UGX 5,000"
-          active={sponsorship === "sponsored_day"}
-          onPress={() => setSponsorship("sponsored_day")}
+    <AppScreen scroll>
+      <View style={contentStyle}>
+        <AppHeader
+          title="Payment"
+          subtitle={mode === "create" ? "Publishing new job" : "Renewing job"}
+          onBackPress={() => navigation.goBack()}
         />
 
-        <Option
-          label="1 Week boost"
-          price="UGX 10,000"
-          active={sponsorship === "sponsored_week"}
-          onPress={() => setSponsorship("sponsored_week")}
+        {error ? <InlineAlert tone="error" message={error} /> : null}
+
+        <AppCard variant="elevated" padding="lg">
+          <View style={heroStyle}>
+            <StatusBadge label="Review" tone="info" />
+            <AppText variant="h3">Review payment</AppText>
+            <AppText variant="bodySm" tone="secondary">
+              Confirm your posting fee and choose whether you want extra
+              visibility.
+            </AppText>
+          </View>
+        </AppCard>
+
+        <InlineAlert
+          tone="info"
+          title="Before your job goes live"
+          message="Your job will be published after payment is successfully created and processed."
         />
 
-        <Option
-          label="1 Month boost"
-          price="UGX 25,000"
-          active={sponsorship === "sponsored_month"}
-          onPress={() => setSponsorship("sponsored_month")}
-        />
+        <AppCard variant="elevated" padding="lg">
+          <View style={sectionStyle}>
+            <AppText variant="titleLg">Base posting fee</AppText>
 
-        {sponsorship && (
-          <Pressable
-            onPress={() => setSponsorship(null)}
-            style={{ marginTop: 6 }}
-          >
-            <Text style={removeBoost}>Remove boost</Text>
-          </Pressable>
-        )}
-      </Section>
+            <View style={rowStyle}>
+              <View style={{ flex: 1 }}>
+                <AppText variant="body">Job posting</AppText>
+                <AppText variant="bodySm" tone="secondary">
+                  Required to publish or renew this job.
+                </AppText>
+              </View>
 
-      {/* TOTAL */}
-      <Section>
-        <Row>
-          <Text style={totalLabel}>Total</Text>
-          <Text style={totalLabel}>UGX {total}</Text>
-        </Row>
-      </Section>
+              <View style={priceBlockStyle}>
+                <AppText variant="title">
+                  {formatCurrency(PRICES.job_post)}
+                </AppText>
+              </View>
+            </View>
+          </View>
+        </AppCard>
 
-      {/* PAY BUTTON */}
-      <Pressable
-        onPress={proceedToPay}
-        disabled={loading}
-        style={[payBtn, { opacity: loading ? 0.6 : 1 }]}
-      >
-        {loading ? (
-          <ActivityIndicator color="#fff" />
-        ) : (
-          <Text style={payText}>Pay & Publish</Text>
-        )}
-      </Pressable>
-    </View>
+        <AppCard variant="elevated" padding="lg">
+          <View style={sectionStyle}>
+            <View style={rowStyle}>
+              <View style={{ flex: 1 }}>
+                <AppText variant="titleLg">Boost visibility</AppText>
+                <AppText variant="bodySm" tone="secondary">
+                  Optional promotion to help more applicants discover your job.
+                </AppText>
+              </View>
+
+              {selectedBoost ? (
+                <StatusBadge label="Selected" tone="sponsored" />
+              ) : null}
+            </View>
+
+            <View style={boostListStyle}>
+              {SPONSOR_OPTIONS.map((option) => {
+                const active = sponsorship === option.value;
+
+                return (
+                  <AppCard
+                    key={option.value}
+                    variant={active ? "sponsored" : "default"}
+                    padding="lg"
+                    onPress={() =>
+                      setSponsorship((current) =>
+                        current === option.value ? null : option.value,
+                      )
+                    }
+                  >
+                    <View style={boostCardContentStyle}>
+                      <View style={rowStyle}>
+                        <View style={{ flex: 1 }}>
+                          <View
+                            style={{
+                              flexDirection: "row",
+                              alignItems: "center",
+                              gap: theme.spacing.xs,
+                              marginBottom: 4,
+                              flexWrap: "wrap",
+                            }}
+                          >
+                            <AppText variant="title">{option.label}</AppText>
+
+                            {option.popular ? (
+                              <StatusBadge label="Popular" tone="premium" />
+                            ) : null}
+
+                            {active ? (
+                              <StatusBadge label="Selected" tone="sponsored" />
+                            ) : null}
+                          </View>
+
+                          <AppText variant="bodySm" tone="secondary">
+                            {option.description}
+                          </AppText>
+                        </View>
+
+                        <View style={priceBlockStyle}>
+                          <AppText variant="title">
+                            {formatCurrency(option.price)}
+                          </AppText>
+                        </View>
+                      </View>
+                    </View>
+                  </AppCard>
+                );
+              })}
+            </View>
+          </View>
+        </AppCard>
+
+        <AppCard variant="premium" padding="lg">
+          <View style={sectionStyle}>
+            <StatusBadge label="Payment Summary" tone="premium" />
+
+            <View style={totalRowStyle}>
+              <View style={{ flex: 1, gap: 4 }}>
+                <AppText variant="titleLg">Total</AppText>
+                <AppText variant="bodySm" tone="secondary">
+                  Posting fee
+                </AppText>
+
+                {selectedBoost ? (
+                  <AppText variant="bodySm" tone="secondary">
+                    + {selectedBoost.label}
+                  </AppText>
+                ) : (
+                  <AppText variant="bodySm" tone="secondary">
+                    No optional boost selected
+                  </AppText>
+                )}
+              </View>
+
+              <View style={priceBlockStyle}>
+                <AppText variant="h2">{formatCurrency(total)}</AppText>
+              </View>
+            </View>
+          </View>
+        </AppCard>
+
+        <View style={footerActionsStyle}>
+          <AppButton
+            title={payButtonLabel}
+            onPress={proceedToPay}
+            loading={loading}
+            disabled={loading}
+            variant="primary"
+          />
+
+          {selectedBoost ? (
+            <InlineAlert
+              tone="success"
+              message={`${selectedBoost.label} has been added to this payment.`}
+            />
+          ) : (
+            <InlineAlert
+              tone="info"
+              message="You can continue with only the standard posting fee if you do not need extra promotion."
+            />
+          )}
+        </View>
+      </View>
+    </AppScreen>
   );
 }
-
-/* =====================================================
-   UI COMPONENTS
-===================================================== */
-
-function Section({ children }: { children: React.ReactNode }) {
-  return <View style={section}>{children}</View>;
-}
-
-function Row({ children }: { children: React.ReactNode }) {
-  return <View style={row}>{children}</View>;
-}
-
-function Option({
-  label,
-  price,
-  active,
-  onPress,
-}: {
-  label: string;
-  price: string;
-  active: boolean;
-  onPress(): void;
-}) {
-  return (
-    <Pressable onPress={onPress} style={[option, active && optionActive]}>
-      <Row>
-        <Text
-          style={{
-            color: active ? "#fff" : "#0F172A",
-            fontWeight: "700",
-          }}
-        >
-          {label}
-        </Text>
-
-        <Text
-          style={{
-            color: active ? "#fff" : "#0F172A",
-            fontWeight: "700",
-          }}
-        >
-          {price}
-        </Text>
-      </Row>
-    </Pressable>
-  );
-}
-
-/* =====================================================
-   STYLES
-===================================================== */
-
-const title = {
-  fontSize: 22,
-  fontWeight: "800",
-  marginBottom: 16,
-};
-
-const section = {
-  backgroundColor: "#fff",
-  padding: 14,
-  borderRadius: 16,
-  marginBottom: 16,
-  borderWidth: 1,
-  borderColor: "#E5E7EB",
-};
-
-const sectionTitle = {
-  fontWeight: "800",
-  marginBottom: 6,
-  fontSize: 14,
-};
-
-const hint = {
-  fontSize: 12,
-  color: "#64748B",
-  marginBottom: 10,
-};
-
-const row = {
-  flexDirection: "row" as const,
-  justifyContent: "space-between" as const,
-  alignItems: "center" as const,
-};
-
-const rowText = {
-  fontWeight: "600",
-};
-
-const totalLabel = {
-  fontWeight: "800",
-  fontSize: 15,
-};
-
-const option = {
-  padding: 12,
-  borderRadius: 14,
-  borderWidth: 1,
-  borderColor: "#CBD5E1",
-  marginBottom: 10,
-};
-
-const optionActive = {
-  backgroundColor: "#0F172A",
-  borderColor: "#0F172A",
-};
-
-const removeBoost = {
-  fontSize: 12,
-  color: "#475569",
-};
-
-const payBtn = {
-  backgroundColor: "#0F172A",
-  paddingVertical: 16,
-  borderRadius: 18,
-};
-
-const payText = {
-  color: "#fff",
-  fontWeight: "800",
-  textAlign: "center" as const,
-  fontSize: 16,
-};
