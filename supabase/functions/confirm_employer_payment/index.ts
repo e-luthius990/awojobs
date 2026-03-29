@@ -25,8 +25,6 @@ serve(async (req) => {
   }
 
   try {
-    /* ================= SECRET VALIDATION ================= */
-
     const secret = req.headers.get("x-provider-secret");
     const expected = Deno.env.get("PAYMENT_PROVIDER_SECRET");
 
@@ -34,12 +32,12 @@ serve(async (req) => {
       return json({ error: "Unauthorized" }, 401);
     }
 
-    /* ================= PAYLOAD ================= */
-
     const body = await req.json().catch(() => null);
 
     const provider = body?.provider;
     const provider_ref = body?.provider_ref;
+    const amount = body?.amount;
+    const currency = body?.currency ?? "UGX";
 
     if (!isNonEmptyString(provider) || !isNonEmptyString(provider_ref)) {
       return json({ error: "Missing provider/provider_ref" }, 400);
@@ -49,7 +47,13 @@ serve(async (req) => {
       return json({ error: "Invalid provider" }, 400);
     }
 
-    /* ================= SUPABASE SERVICE ================= */
+    if (amount != null && (typeof amount !== "number" || !Number.isFinite(amount) || amount <= 0)) {
+      return json({ error: "Invalid amount" }, 400);
+    }
+
+    if (!isNonEmptyString(currency)) {
+      return json({ error: "Invalid currency" }, 400);
+    }
 
     const service = createClient(
       Deno.env.get("SUPABASE_URL")!,
@@ -57,48 +61,45 @@ serve(async (req) => {
       { auth: { persistSession: false } },
     );
 
-    /* ================= CONFIRM PAYMENT ================= */
-
-    const { data, error } =
-      await service.rpc("confirm_employer_payment_by_ref", {
-        p_provider: provider.trim(),
-        p_provider_ref: provider_ref.trim(),
-      });
+    const { data, error } = await service.rpc("confirm_employer_payment_by_ref", {
+      p_provider: provider.trim(),
+      p_provider_ref: provider_ref.trim(),
+      p_amount: amount ?? null,
+      p_currency: currency.trim().toUpperCase(),
+    });
 
     if (error) {
       console.error("[confirm_employer_payment_by_ref]", {
         provider,
         provider_ref,
+        amount,
+        currency,
         error: error.message,
+        details: error.details,
+        hint: error.hint,
+        code: error.code,
       });
 
-      // Log failure attempt
-      await service.from("payment_confirmation_log").insert({
-        provider: provider.trim(),
-        provider_ref: provider_ref.trim(),
-        success: false,
-      });
-
-      return json({ error: "Payment processing failed" }, 400);
+      return json(
+        {
+          error: error.message || "Payment processing failed",
+          code: error.code ?? null,
+        },
+        400,
+      );
     }
 
     if (data !== true) {
       console.warn("[confirm_employer_payment_by_ref unexpected]", {
         provider,
         provider_ref,
+        amount,
+        currency,
         data,
       });
 
       return json({ error: "Invalid RPC response" }, 400);
     }
-
-    /* ================= SUCCESS LOG ================= */
-
-    await service.from("payment_confirmation_log").insert({
-      provider: provider.trim(),
-      provider_ref: provider_ref.trim(),
-      success: true,
-    });
 
     return json({ ok: true });
   } catch (err) {

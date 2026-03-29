@@ -15,7 +15,11 @@ type Sponsorship = "sponsored_day" | "sponsored_week" | "sponsored_month";
 
 type SponsorIntentResponse = {
   intent_id?: string | null;
+  payment_reference?: string | null;
+  amount?: number | null;
+  job_id?: string | null;
   error?: string | null;
+  code?: string | null;
   message?: string | null;
 };
 
@@ -139,12 +143,21 @@ export default function SponsorPaymentScreen({ route, navigation }: any) {
   );
 
   const makeIdempotencyKey = useCallback(() => {
+    if (!jobId) {
+      throw new Error("Missing job id.");
+    }
+
     return `${jobId}_${Date.now()}_${Math.random()
       .toString(36)
       .slice(2)}_${Math.random().toString(36).slice(2)}`;
   }, [jobId]);
 
   const proceed = useCallback(async () => {
+    if (!jobId) {
+      setError("Invalid job reference.");
+      return;
+    }
+
     if (!selected) {
       setError("Select a boost plan before continuing.");
       return;
@@ -157,7 +170,7 @@ export default function SponsorPaymentScreen({ route, navigation }: any) {
       setError(null);
 
       const { data, error } = await supabase.functions.invoke(
-        "create_sponsor_upgrade_intent",
+        "create_job_sponsor_payment_intent",
         {
           body: {
             job_id: jobId,
@@ -167,7 +180,9 @@ export default function SponsorPaymentScreen({ route, navigation }: any) {
         },
       );
 
-      if (error) throw error;
+      if (error) {
+        throw new Error(error.message || "Could not start payment.");
+      }
 
       const payload = (data ?? {}) as SponsorIntentResponse;
 
@@ -181,8 +196,10 @@ export default function SponsorPaymentScreen({ route, navigation }: any) {
 
       navigation.replace("PaymentPending", {
         jobId,
-        flow: "sponsor_upgrade",
+        flow: "job_sponsor",
         intentId: payload.intent_id,
+        paymentReference: payload.payment_reference ?? null,
+        amount: payload.amount ?? null,
       });
     } catch (e: any) {
       setError(e?.message ?? "Could not start payment. Try again.");

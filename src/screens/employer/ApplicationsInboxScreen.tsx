@@ -1,14 +1,17 @@
-import React, { useEffect, useState, useCallback, useMemo } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   FlatList,
   RefreshControl,
   View,
   Pressable,
+  type ListRenderItem,
   type ViewStyle,
 } from "react-native";
 import * as Linking from "expo-linking";
-import AsyncStorage from "@react-native-async-storage/async-storage";
+import { useFocusEffect } from "@react-navigation/native";
+
 import { supabase } from "../../core/supabase";
+import { useSession } from "../../state/useSession";
 import { fetchMyApplications } from "../../jobs/applications.service";
 import { Application, ApplicationStatus } from "../../jobs/applications.types";
 
@@ -23,31 +26,9 @@ import { InlineAlert } from "../../ui/InlineAlert";
 import { StatusBadge } from "../../ui/StatusBadge";
 import { SkeletonCard } from "../../ui/Skeleton";
 
-/* --------------------------------------------- */
-const NEW_WINDOW_HOURS = 24;
-const VIEWED_STORAGE_KEY = "employer_viewed_applications";
-/* --------------------------------------------- */
+type AppStatusTone = React.ComponentProps<typeof StatusBadge>["tone"];
 
-function isNew(createdAt: string, viewedIds: Set<string>, id: string) {
-  if (viewedIds.has(id)) return false;
-  const created = new Date(createdAt).getTime();
-  if (Number.isNaN(created)) return false;
-  return Date.now() - created < NEW_WINDOW_HOURS * 60 * 60 * 1000;
-}
-
-function normalizeUgPhone(phone: string) {
-  const digits = phone.replace(/\D/g, "");
-  if (digits.length === 12 && digits.startsWith("256")) return `+${digits}`;
-  if (digits.length === 10 && digits.startsWith("0")) {
-    return `+256${digits.slice(1)}`;
-  }
-  if (digits.length === 9 && digits.startsWith("7")) return `+256${digits}`;
-  return `+${digits}`;
-}
-
-function mapStatusTone(
-  status: ApplicationStatus,
-): React.ComponentProps<typeof StatusBadge>["tone"] {
+function mapStatusTone(status: ApplicationStatus): AppStatusTone {
   switch (status) {
     case "pending":
       return "warning";
@@ -81,6 +62,49 @@ function formatStatus(status: ApplicationStatus) {
   }
 }
 
+function normalizeUgPhone(phone: string) {
+  const digits = phone.replace(/\D/g, "");
+
+  if (!digits) return "";
+
+  if (digits.length === 12 && digits.startsWith("256")) return `+${digits}`;
+  if (digits.length === 10 && digits.startsWith("0")) {
+    return `+256${digits.slice(1)}`;
+  }
+  if (digits.length === 9 && digits.startsWith("7")) return `+256${digits}`;
+
+  return `+${digits}`;
+}
+
+function formatDateTime(value?: string | null) {
+  if (!value) return "Unknown date";
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Unknown date";
+
+  return date.toLocaleString();
+}
+
+function getApplicantName(app: Application) {
+  return app.applicant_name?.trim() || "Applicant";
+}
+
+function getApplicantPhone(app: Application) {
+  return app.applicant_phone?.trim() || null;
+}
+
+function getCreatedAt(app: Application) {
+  return app.created_at;
+}
+
+function getJobTitle(app: Application) {
+  return app.job?.title?.trim() || null;
+}
+
+function getSource(app: Application) {
+  return app.source?.trim() || null;
+}
+
 function QuickStat({ label, value }: { label: string; value: number }) {
   return (
     <AppCard variant="elevated" padding="lg" style={{ flex: 1 }}>
@@ -96,65 +120,126 @@ function QuickStat({ label, value }: { label: string; value: number }) {
 
 export default function ApplicationsInboxScreen() {
   const { theme } = useTheme();
+  const { session } = useSession();
+
+  const userId = session?.user?.id ?? null;
 
   const [apps, setApps] = useState<Application[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [viewedIds, setViewedIds] = useState<Set<string>>(new Set());
   const [updatingIds, setUpdatingIds] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    let active = true;
+  const contentStyle = useMemo<ViewStyle>(
+    () => ({
+      gap: theme.spacing.md,
+      paddingHorizontal: theme.spacing.screenX,
+      paddingTop: theme.spacing.md,
+      paddingBottom: theme.spacing.xxxl,
+    }),
+    [theme.spacing.md, theme.spacing.screenX, theme.spacing.xxxl],
+  );
 
-    AsyncStorage.getItem(VIEWED_STORAGE_KEY).then((data) => {
-      if (!active || !data) return;
+  const statsRowStyle = useMemo<ViewStyle>(
+    () => ({
+      flexDirection: "row",
+      gap: theme.spacing.sm,
+    }),
+    [theme.spacing.sm],
+  );
 
-      try {
-        setViewedIds(new Set(JSON.parse(data)));
-      } catch {
-        // ignore malformed local cache
-      }
-    });
+  const headerBlockStyle = useMemo<ViewStyle>(
+    () => ({
+      gap: theme.spacing.sm,
+    }),
+    [theme.spacing.sm],
+  );
 
-    return () => {
-      active = false;
-    };
-  }, []);
+  const cardContentStyle = useMemo<ViewStyle>(
+    () => ({
+      gap: theme.spacing.sm,
+    }),
+    [theme.spacing.sm],
+  );
 
-  const load = useCallback(async (options?: { silent?: boolean }) => {
-    const silent = options?.silent === true;
+  const topRowStyle = useMemo<ViewStyle>(
+    () => ({
+      flexDirection: "row",
+      alignItems: "flex-start",
+      justifyContent: "space-between",
+      gap: theme.spacing.sm,
+    }),
+    [theme.spacing.sm],
+  );
 
-    if (!silent) {
-      setLoading(true);
-    }
+  const actionRowStyle = useMemo<ViewStyle>(
+    () => ({
+      flexDirection: "row",
+      flexWrap: "wrap",
+      gap: theme.spacing.sm,
+    }),
+    [theme.spacing.sm],
+  );
 
+  const load = useCallback(async () => {
+    setLoading(true);
     setError(null);
 
     try {
       const data = await fetchMyApplications();
-      setApps(data);
+      setApps(Array.isArray(data) ? data : []);
     } catch {
       setError("Could not load applications right now.");
       setApps([]);
     } finally {
-      if (!silent) setLoading(false);
+      setLoading(false);
+    }
+  }, []);
+
+  const refresh = useCallback(async () => {
+    setRefreshing(true);
+    setError(null);
+
+    try {
+      const data = await fetchMyApplications();
+      setApps(Array.isArray(data) ? data : []);
+    } catch {
+      setError("Could not refresh applications right now.");
+    } finally {
       setRefreshing(false);
     }
   }, []);
 
-  useEffect(() => {
-    void load();
-  }, [load]);
+  const silentRefresh = useCallback(async () => {
+    try {
+      const data = await fetchMyApplications();
+      setApps(Array.isArray(data) ? data : []);
+    } catch {
+      // keep existing UI on silent refresh failure
+    }
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      void load();
+    }, [load]),
+  );
 
   useEffect(() => {
+    if (!userId) return;
+
     const channel = supabase
-      .channel("applications-inbox")
+      .channel(`applications-inbox-${userId}`)
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "applications" },
+        {
+          event: "*",
+          schema: "public",
+          table: "applications",
+          filter: `employer_id=eq.${userId}`,
+        },
         () => {
-          void load({ silent: true });
+          void silentRefresh();
         },
       )
       .subscribe();
@@ -162,14 +247,7 @@ export default function ApplicationsInboxScreen() {
     return () => {
       void supabase.removeChannel(channel);
     };
-  }, [load]);
-
-  const totalCount = apps.length;
-
-  const newCount = useMemo(
-    () => apps.filter((a) => isNew(a.created_at, viewedIds, a.id)).length,
-    [apps, viewedIds],
-  );
+  }, [silentRefresh, userId]);
 
   const setUpdating = useCallback((id: string, active: boolean) => {
     setUpdatingIds((prev) => {
@@ -182,48 +260,40 @@ export default function ApplicationsInboxScreen() {
 
   const updateStatus = useCallback(
     async (id: string, status: ApplicationStatus) => {
+      if (!userId) {
+        setError("You must be signed in.");
+        return;
+      }
+
       if (updatingIds.has(id)) return;
 
       try {
+        setError(null);
         setUpdating(id, true);
 
-        const { error } = await supabase
+        setApps((prev) =>
+          prev.map((app) => (app.id === id ? { ...app, status } : app)),
+        );
+
+        const { error: updateError } = await supabase
           .from("applications")
           .update({ status })
-          .eq("id", id);
+          .eq("id", id)
+          .eq("employer_id", userId);
 
-        if (error) throw error;
+        if (updateError) {
+          throw updateError;
+        }
 
-        setApps((prev) =>
-          prev.map((a) => (a.id === id ? { ...a, status } : a)),
-        );
+        await silentRefresh();
       } catch {
         setError("Could not update application status.");
+        await silentRefresh();
       } finally {
         setUpdating(id, false);
       }
     },
-    [setUpdating, updatingIds],
-  );
-
-  const markViewed = useCallback(
-    async (id: string) => {
-      if (viewedIds.has(id)) return;
-
-      const updated = new Set(viewedIds);
-      updated.add(id);
-      setViewedIds(updated);
-
-      try {
-        await AsyncStorage.setItem(
-          VIEWED_STORAGE_KEY,
-          JSON.stringify(Array.from(updated)),
-        );
-      } catch {
-        // ignore local persistence failure
-      }
-    },
-    [viewedIds],
+    [setUpdating, silentRefresh, updatingIds, userId],
   );
 
   const call = useCallback(async (phone?: string | null) => {
@@ -233,7 +303,13 @@ export default function ApplicationsInboxScreen() {
     }
 
     try {
-      const url = `tel:${normalizeUgPhone(phone)}`;
+      const normalized = normalizeUgPhone(phone);
+      if (!normalized) {
+        setError("Phone number is not valid.");
+        return;
+      }
+
+      const url = `tel:${normalized}`;
       const supported = await Linking.canOpenURL(url);
 
       if (!supported) {
@@ -254,10 +330,16 @@ export default function ApplicationsInboxScreen() {
     }
 
     try {
+      const normalized = normalizeUgPhone(phone).replace("+", "");
+      if (!normalized) {
+        setError("Phone number is not valid.");
+        return;
+      }
+
       const msg = encodeURIComponent(
         `Hello ${name}, thank you for applying via AwoJobs.`,
       );
-      const url = `https://wa.me/${normalizeUgPhone(phone).replace("+", "")}?text=${msg}`;
+      const url = `https://wa.me/${normalized}?text=${msg}`;
       const supported = await Linking.canOpenURL(url);
 
       if (!supported) {
@@ -271,112 +353,155 @@ export default function ApplicationsInboxScreen() {
     }
   }, []);
 
-  const headerContentStyle = useMemo<ViewStyle>(
-    () => ({
-      paddingHorizontal: theme.spacing.screenX,
-      paddingTop: theme.spacing.md,
-      gap: theme.spacing.lg,
-    }),
-    [theme.spacing.lg, theme.spacing.md, theme.spacing.screenX],
+  const pendingCount = useMemo(
+    () => apps.filter((app) => app.status === "pending").length,
+    [apps],
   );
 
-  const summaryRowStyle = useMemo<ViewStyle>(
-    () => ({
-      flexDirection: "row",
-      gap: theme.spacing.sm,
-    }),
-    [theme.spacing.sm],
+  const reviewedCount = useMemo(
+    () => apps.filter((app) => app.status === "reviewed").length,
+    [apps],
   );
 
-  const listContentStyle = useMemo<ViewStyle>(
-    () => ({
-      paddingBottom: theme.spacing.xxxl,
-      paddingTop: theme.spacing.md,
-    }),
-    [theme.spacing.md, theme.spacing.xxxl],
+  const newCount = useMemo(
+    () => apps.filter((app) => app.status === "pending").length,
+    [apps],
   );
 
-  const itemWrapStyle = useMemo<ViewStyle>(
-    () => ({
-      marginBottom: theme.spacing.sm,
-      paddingHorizontal: theme.spacing.screenX,
-    }),
-    [theme.spacing.screenX, theme.spacing.sm],
-  );
+  const renderItem: ListRenderItem<Application> = useCallback(
+    ({ item }) => {
+      const applicantName = getApplicantName(item);
+      const applicantPhone = getApplicantPhone(item);
+      const jobTitle = getJobTitle(item);
+      const source = getSource(item);
+      const createdAt = getCreatedAt(item);
+      const pending = item.status === "pending";
+      const busy = updatingIds.has(item.id);
+      const fresh = item.status === "pending";
 
-  const cardContentStyle = useMemo<ViewStyle>(
-    () => ({
-      gap: theme.spacing.md,
-    }),
-    [theme.spacing.md],
-  );
+      return (
+        <AppCard variant="elevated" padding="lg">
+          <View style={cardContentStyle}>
+            <View style={topRowStyle}>
+              <View style={{ flex: 1, gap: 4 }}>
+                <AppText variant="title">{applicantName}</AppText>
 
-  const topRowStyle = useMemo<ViewStyle>(
-    () => ({
-      flexDirection: "row",
-      justifyContent: "space-between",
-      alignItems: "flex-start",
-      gap: theme.spacing.sm,
-    }),
-    [theme.spacing.sm],
-  );
+                {jobTitle ? (
+                  <AppText variant="bodySm" tone="secondary">
+                    {jobTitle}
+                  </AppText>
+                ) : null}
 
-  const leftColStyle = useMemo<ViewStyle>(
-    () => ({
-      flex: 1,
-      gap: theme.spacing.xs,
-    }),
-    [theme.spacing.xs],
-  );
+                <AppText variant="caption" tone="secondary">
+                  Applied {formatDateTime(createdAt)}
+                </AppText>
+              </View>
 
-  const rightColStyle = useMemo<ViewStyle>(
-    () => ({
-      alignItems: "flex-end",
-      gap: 6,
-    }),
-    [],
-  );
+              <View style={{ alignItems: "flex-end", gap: 8 }}>
+                {fresh ? <StatusBadge label="New" tone="success" /> : null}
+                <StatusBadge
+                  label={formatStatus(item.status)}
+                  tone={mapStatusTone(item.status)}
+                />
+              </View>
+            </View>
 
-  const nameRowStyle = useMemo<ViewStyle>(
-    () => ({
-      flexDirection: "row",
-      alignItems: "center",
-      gap: theme.spacing.xs,
-      flexWrap: "wrap",
-    }),
-    [theme.spacing.xs],
-  );
+            {applicantPhone ? (
+              <AppText variant="bodySm">{applicantPhone}</AppText>
+            ) : (
+              <AppText variant="bodySm" tone="secondary">
+                No phone number available
+              </AppText>
+            )}
 
-  const primaryActionRowStyle = useMemo<ViewStyle>(
-    () => ({
-      flexDirection: "row",
-      flexWrap: "wrap",
-      gap: theme.spacing.xs,
-    }),
-    [theme.spacing.xs],
-  );
+            {source ? (
+              <AppText variant="caption" tone="secondary">
+                Source: {source}
+              </AppText>
+            ) : null}
 
-  const secondaryActionRowStyle = useMemo<ViewStyle>(
-    () => ({
-      flexDirection: "row",
-      flexWrap: "wrap",
-      gap: theme.spacing.xs,
-    }),
-    [theme.spacing.xs],
-  );
+            <View style={actionRowStyle}>
+              <AppButton
+                title="Call"
+                variant="secondary"
+                onPress={() => {
+                  void call(applicantPhone);
+                }}
+              />
 
-  const loaderWrapStyle = useMemo<ViewStyle>(
-    () => ({
-      gap: theme.spacing.md,
-    }),
-    [theme.spacing.md],
+              <AppButton
+                title="WhatsApp"
+                variant="secondary"
+                onPress={() => {
+                  void whatsapp(applicantPhone, applicantName);
+                }}
+              />
+
+              {item.status !== "reviewed" ? (
+                <AppButton
+                  title={busy ? "Updating..." : "Review"}
+                  variant="secondary"
+                  disabled={busy}
+                  onPress={() => {
+                    void updateStatus(item.id, "reviewed");
+                  }}
+                />
+              ) : null}
+
+              {item.status !== "shortlisted" ? (
+                <AppButton
+                  title={busy ? "Updating..." : "Shortlist"}
+                  variant="secondary"
+                  disabled={busy}
+                  onPress={() => {
+                    void updateStatus(item.id, "shortlisted");
+                  }}
+                />
+              ) : null}
+
+              {item.status !== "rejected" ? (
+                <AppButton
+                  title={busy ? "Updating..." : "Reject"}
+                  variant="secondary"
+                  disabled={busy}
+                  onPress={() => {
+                    void updateStatus(item.id, "rejected");
+                  }}
+                />
+              ) : null}
+
+              {pending ||
+              item.status === "reviewed" ||
+              item.status === "shortlisted" ? (
+                <AppButton
+                  title={busy ? "Updating..." : "Hire"}
+                  variant="primary"
+                  disabled={busy}
+                  onPress={() => {
+                    void updateStatus(item.id, "hired");
+                  }}
+                />
+              ) : null}
+            </View>
+          </View>
+        </AppCard>
+      );
+    },
+    [
+      actionRowStyle,
+      call,
+      cardContentStyle,
+      topRowStyle,
+      updateStatus,
+      updatingIds,
+      whatsapp,
+    ],
   );
 
   if (loading) {
     return (
       <AppScreen scroll>
-        <View style={loaderWrapStyle}>
-          <AppHeader title="Applications Inbox" />
+        <View style={{ gap: theme.spacing.md }}>
           <SkeletonCard lines={3} />
           <SkeletonCard lines={3} />
           <SkeletonCard lines={3} />
@@ -385,178 +510,53 @@ export default function ApplicationsInboxScreen() {
     );
   }
 
-  if (error && apps.length === 0) {
-    return (
-      <AppScreen centerContent>
-        <EmptyState
-          title="Could not load applications"
-          message={error}
-          action={
-            <AppButton
-              title="Try Again"
-              onPress={() => void load()}
-              variant="primary"
-            />
-          }
-        />
-      </AppScreen>
-    );
-  }
-
-  if (!apps.length) {
-    return (
-      <AppScreen centerContent>
-        <EmptyState
-          title="No applications yet"
-          message="When candidates apply to your jobs, they will appear here."
-        />
-      </AppScreen>
-    );
-  }
-
-  const header = (
-    <View style={headerContentStyle}>
-      <AppHeader
-        title="Applications"
-        subtitle="Review candidates and update their status"
-      />
-
-      <View style={summaryRowStyle}>
-        <QuickStat label="Total" value={totalCount} />
-        <QuickStat label="New" value={newCount} />
-      </View>
-
-      {newCount > 0 ? (
-        <InlineAlert
-          tone="info"
-          title={`${newCount} new application${newCount > 1 ? "s" : ""}`}
-          message="Review new candidates and update their status."
-        />
-      ) : null}
-
-      {error ? <InlineAlert tone="error" message={error} /> : null}
-    </View>
-  );
-
   return (
     <AppScreen padded={false} keyboardAvoiding={false}>
       <FlatList
         data={apps}
         keyExtractor={(item) => item.id}
+        renderItem={renderItem}
         showsVerticalScrollIndicator={false}
-        ListHeaderComponent={header}
-        contentContainerStyle={listContentStyle}
+        contentContainerStyle={contentStyle}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
             onRefresh={() => {
-              setRefreshing(true);
-              void load({ silent: true });
+              void refresh();
             }}
             tintColor={theme.colors.primary}
           />
         }
-        renderItem={({ item }) => {
-          const showNew = isNew(item.created_at, viewedIds, item.id);
-          const isUpdatingThis = updatingIds.has(item.id);
+        ListHeaderComponent={
+          <View style={headerBlockStyle}>
+            <AppHeader
+              title="Applications"
+              subtitle="Review and manage incoming candidates."
+            />
 
-          return (
-            <View style={itemWrapStyle}>
-              <Pressable
-                onPress={() => void markViewed(item.id)}
-                accessibilityRole="button"
-                accessibilityLabel={`Open application from ${item.applicant_name}`}
-                style={({ pressed }) => [{ opacity: pressed ? 0.985 : 1 }]}
-              >
-                <AppCard variant="elevated" padding="lg">
-                  <View style={cardContentStyle}>
-                    <View style={topRowStyle}>
-                      <View style={leftColStyle}>
-                        <View style={nameRowStyle}>
-                          <AppText variant="title">
-                            {item.applicant_name}
-                          </AppText>
-                          {showNew ? (
-                            <StatusBadge label="New" tone="info" />
-                          ) : null}
-                        </View>
-
-                        <AppText variant="bodySm" tone="secondary">
-                          Applied for: {item.job.title}
-                        </AppText>
-                      </View>
-
-                      <View style={rightColStyle}>
-                        <StatusBadge
-                          label={formatStatus(item.status)}
-                          tone={mapStatusTone(item.status)}
-                        />
-                        <AppText variant="caption" tone="tertiary">
-                          {new Date(item.created_at).toLocaleDateString()}
-                        </AppText>
-                      </View>
-                    </View>
-
-                    <View style={primaryActionRowStyle}>
-                      <AppButton
-                        title="Shortlist"
-                        variant="secondary"
-                        size="sm"
-                        fullWidth={false}
-                        onPress={() => updateStatus(item.id, "shortlisted")}
-                        disabled={
-                          item.status === "shortlisted" || isUpdatingThis
-                        }
-                        loading={isUpdatingThis}
-                      />
-
-                      <AppButton
-                        title="Hire"
-                        variant="primary"
-                        size="sm"
-                        fullWidth={false}
-                        onPress={() => updateStatus(item.id, "hired")}
-                        disabled={item.status === "hired" || isUpdatingThis}
-                      />
-
-                      <AppButton
-                        title="Reject"
-                        variant="ghost"
-                        size="sm"
-                        fullWidth={false}
-                        onPress={() => updateStatus(item.id, "rejected")}
-                        disabled={item.status === "rejected" || isUpdatingThis}
-                      />
-                    </View>
-
-                    <View style={secondaryActionRowStyle}>
-                      <AppButton
-                        title="Call"
-                        variant="secondary"
-                        size="sm"
-                        fullWidth={false}
-                        onPress={() => void call(item.applicant_phone)}
-                      />
-
-                      <AppButton
-                        title="WhatsApp"
-                        variant="primary"
-                        size="sm"
-                        fullWidth={false}
-                        onPress={() =>
-                          void whatsapp(
-                            item.applicant_phone,
-                            item.applicant_name,
-                          )
-                        }
-                      />
-                    </View>
-                  </View>
-                </AppCard>
-              </Pressable>
+            <View style={statsRowStyle}>
+              <QuickStat label="Total" value={apps.length} />
+              <QuickStat label="Pending" value={pendingCount} />
+              <QuickStat label="Reviewed" value={reviewedCount} />
             </View>
-          );
-        }}
+
+            {newCount > 0 ? (
+              <InlineAlert
+                tone="success"
+                title={`${newCount} new application${newCount > 1 ? "s" : ""}`}
+                message="New applications are candidates still in pending status."
+              />
+            ) : null}
+
+            {error ? <InlineAlert tone="warning" message={error} /> : null}
+          </View>
+        }
+        ListEmptyComponent={
+          <EmptyState
+            title="No applications yet"
+            message="Applications from your job posts will appear here."
+          />
+        }
       />
     </AppScreen>
   );

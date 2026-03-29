@@ -16,14 +16,17 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 
-import { supabase } from "../../core/supabase";
 import type { AdminPostStackParamList } from "../../navigation/AdminPostNavigator";
 
-import LocationPicker, {
-  type PickerLocation,
-} from "../../ui/admin/LocationPicker";
+import LocationPicker from "../../ui/admin/LocationPicker";
 import ToggleField from "../../ui/admin/ToggleField";
 import TextAreaField from "../../ui/admin/TextAreaField";
+
+import {
+  fetchExactLocationOptions,
+  postAdminJob,
+  type PickerLocation,
+} from "../../services/admin.post-job.service";
 
 import { useTheme } from "../../theme/useTheme";
 import { AppText } from "../../ui/AppText";
@@ -34,24 +37,16 @@ import { InlineAlert } from "../../ui/InlineAlert";
 
 type Props = NativeStackScreenProps<AdminPostStackParamList, "PostJob">;
 
-type DBLocation = {
-  id: string;
-  district: string | null;
-  town: string | null;
-  sub_county: string | null;
-};
-
 export default function AdminPostJobScreen({ navigation }: Props) {
   const { theme } = useTheme();
 
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [contactPhone, setContactPhone] = useState("");
-
   const [isSponsored, setIsSponsored] = useState(false);
 
   const [locationId, setLocationId] = useState<string | null>(null);
-  const [locations, setLocations] = useState<DBLocation[]>([]);
+  const [locations, setLocations] = useState<PickerLocation[]>([]);
 
   const [loadingLocations, setLoadingLocations] = useState(true);
   const [loading, setLoading] = useState(false);
@@ -159,22 +154,19 @@ export default function AdminPostJobScreen({ navigation }: Props) {
   );
 
   const loadLocations = useCallback(async () => {
+    setLoadingLocations(true);
+    setError(null);
+
     try {
-      setLoadingLocations(true);
-      setError(null);
+      const result = await fetchExactLocationOptions(2000);
 
-      const { data, error } = await supabase
-        .from("locations")
-        .select("id,district,town,sub_county")
-        .order("district", { ascending: true })
-        .limit(2000);
+      if (!result.ok) {
+        setLocations([]);
+        setError(result.error.message);
+        return;
+      }
 
-      if (error) throw error;
-
-      setLocations((data ?? []) as DBLocation[]);
-    } catch {
-      setError("Failed to load locations.");
-      setLocations([]);
+      setLocations(result.data);
     } finally {
       setLoadingLocations(false);
     }
@@ -183,13 +175,6 @@ export default function AdminPostJobScreen({ navigation }: Props) {
   useEffect(() => {
     void loadLocations();
   }, [loadLocations]);
-
-  const mappedLocations: PickerLocation[] = useMemo(() => {
-    return locations.map((l) => ({
-      id: l.id,
-      name: [l.district, l.town, l.sub_county].filter(Boolean).join(" • "),
-    }));
-  }, [locations]);
 
   const titleError = useMemo(() => {
     if (!title) return null;
@@ -202,6 +187,15 @@ export default function AdminPostJobScreen({ navigation }: Props) {
     if (description.trim().length < 10) return "Job description is too short.";
     return null;
   }, [description]);
+
+  const contactPhoneError = useMemo(() => {
+    if (!contactPhone.trim()) return null;
+    const normalized = contactPhone.replace(/\s+/g, "");
+    if (!/^(\+256|256|0)\d{9}$/.test(normalized)) {
+      return "Enter a valid Uganda phone number.";
+    }
+    return null;
+  }, [contactPhone]);
 
   const validateForm = useCallback(() => {
     if (!title.trim()) {
@@ -224,6 +218,11 @@ export default function AdminPostJobScreen({ navigation }: Props) {
       return false;
     }
 
+    if (contactPhone.trim() && contactPhoneError) {
+      setError(contactPhoneError);
+      return false;
+    }
+
     if (!locationId) {
       setError("Location is required.");
       return false;
@@ -231,36 +230,46 @@ export default function AdminPostJobScreen({ navigation }: Props) {
 
     setError(null);
     return true;
-  }, [title, description, locationId]);
+  }, [title, description, contactPhone, contactPhoneError, locationId]);
 
   const handlePostJob = useCallback(async () => {
     if (loading) return;
-    if (!validateForm()) return;
+    if (!validateForm() || !locationId) return;
+
+    setLoading(true);
+    setError(null);
 
     try {
-      setLoading(true);
-      setError(null);
-
-      const { error } = await supabase.rpc("admin_post_job", {
-        p_title: title.trim(),
-        p_description: description.trim(),
-        p_location_id: locationId,
-        p_is_sponsored: isSponsored,
+      const result = await postAdminJob({
+        title,
+        description,
+        locationId,
+        isSponsored,
+        contactPhone: contactPhone.trim() ? contactPhone.trim() : null,
       });
 
-      if (error) throw error;
+      if (!result.ok) {
+        setError(result.error.message);
+        return;
+      }
 
       setTitle("");
       setDescription("");
       setContactPhone("");
       setIsSponsored(false);
       setLocationId(null);
-    } catch (e: any) {
-      setError(e?.message || "Failed to post admin job.");
     } finally {
       setLoading(false);
     }
-  }, [description, isSponsored, loading, locationId, title, validateForm]);
+  }, [
+    contactPhone,
+    description,
+    isSponsored,
+    loading,
+    locationId,
+    title,
+    validateForm,
+  ]);
 
   return (
     <KeyboardAvoidingView
@@ -356,6 +365,11 @@ export default function AdminPostJobScreen({ navigation }: Props) {
                   placeholderTextColor={theme.colors.textMuted}
                   style={inputStyle}
                 />
+                {contactPhoneError ? (
+                  <AppText variant="caption" tone="error">
+                    {contactPhoneError}
+                  </AppText>
+                ) : null}
               </View>
             </View>
           </AppCard>
@@ -363,7 +377,7 @@ export default function AdminPostJobScreen({ navigation }: Props) {
           <AppCard variant="elevated" padding="lg">
             <View style={sectionContentStyle}>
               <AppText variant="labelLg" weight="800">
-                Visibility & Targeting
+                Visibility &amp; Targeting
               </AppText>
 
               <ToggleField
@@ -388,12 +402,15 @@ export default function AdminPostJobScreen({ navigation }: Props) {
               ) : (
                 <LocationPicker
                   label="Job Location"
-                  locations={mappedLocations}
+                  locations={locations}
                   selectedId={locationId}
                   onSelect={(value) => {
                     setLocationId(value);
                     if (error) setError(null);
                   }}
+                  placeholder="Search district, town or subcounty..."
+                  minSearchLength={1}
+                  showInitialItems={false}
                 />
               )}
             </View>

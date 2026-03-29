@@ -3,7 +3,6 @@ import {
   getCachedLocation,
   saveCachedLocation,
 } from "./location.cache";
-import { getManualLocation } from "./manual-location.cache";
 import { ensureLocationPermission } from "./location.permissions";
 import { getCoordinates } from "./location.coords";
 import { resolveLocationFromCoords } from "./location.rpc";
@@ -15,56 +14,44 @@ function isFresh(resolvedAt?: number | null) {
 }
 
 export async function resolveLocation(): Promise<ResolvedLocation | null> {
-  const manual = await getManualLocation();
-  if (manual?.location_id) {
-    const location: ResolvedLocation = {
-      source: "manual",
-      location_id: manual.location_id,
-      district: manual.district ?? null,
-      town: manual.town ?? null,
-      sub_county: manual.sub_county ?? null,
-      lat: null,
-      lng: null,
-      resolved_at: Date.now(),
-    };
+  let cached: ResolvedLocation | null = null;
 
-    await saveCachedLocation(location);
-    return location;
+  try {
+    cached = await getCachedLocation();
+  } catch {
+    cached = null;
   }
 
-  const allowed = await ensureLocationPermission();
+  const permission = await ensureLocationPermission();
 
-  if (allowed) {
-    try {
-      const coords = await getCoordinates();
-      const resolved = await resolveLocationFromCoords(coords.lat, coords.lng);
+  if (!permission.allowed) {
+    return null;
+  }
 
-      if (resolved?.location_id) {
-        const gpsLocation: ResolvedLocation = {
-          source: "gps",
-          location_id: resolved.location_id,
-          district: resolved.district ?? null,
-          town: resolved.town ?? null,
-          sub_county: resolved.sub_county ?? null,
-          lat: coords.lat,
-          lng: coords.lng,
-          resolved_at: Date.now(),
-        };
+  try {
+    const coords = await getCoordinates();
+    const resolved = await resolveLocationFromCoords(coords.lat, coords.lng);
 
-        await saveCachedLocation(gpsLocation);
-        return gpsLocation;
-      }
-    } catch {
-      // continue to cache fallback
+    if (resolved?.location_id) {
+      const gpsLocation: ResolvedLocation = {
+        source: "gps",
+        location_id: resolved.location_id,
+        district: resolved.district ?? null,
+        town: resolved.town ?? null,
+        sub_county: resolved.sub_county ?? null,
+        lat: coords.lat,
+        lng: coords.lng,
+        resolved_at: Date.now(),
+      };
+
+      await saveCachedLocation(gpsLocation);
+      return gpsLocation;
     }
+  } catch {
+    // fall through to fresh cache fallback
   }
 
-  const cached = await getCachedLocation();
   if (cached?.location_id && isFresh(cached.resolved_at)) {
-    return cached;
-  }
-
-  if (cached?.location_id) {
     return cached;
   }
 

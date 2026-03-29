@@ -3,14 +3,18 @@ import React, {
   useMemo,
   useState,
   useCallback,
+  useRef,
   type ViewStyle,
 } from "react";
 import { View } from "react-native";
 import { useNavigation } from "@react-navigation/native";
 
-import { supabase } from "../../core/supabase";
 import { useSession } from "../../state/useSession";
-import { setPendingIntent } from "../../intent/intent.store";
+import {
+  setPendingIntent,
+  peekPendingIntent,
+  clearPendingIntent,
+} from "../../intent/intent.store";
 
 import { useTheme } from "../../theme/useTheme";
 import { AppScreen } from "../../ui/AppScreen";
@@ -22,25 +26,20 @@ import { InlineAlert } from "../../ui/InlineAlert";
 import { StatusBadge } from "../../ui/StatusBadge";
 import { SkeletonCard } from "../../ui/Skeleton";
 
+import {
+  createPremiumIntent,
+  fetchPremiumStatus,
+  type PremiumPurpose,
+  type PremiumRecord,
+  type UserRole,
+} from "../../services/premium.intent.service";
+
 type Plan = {
   id: string;
   label: string;
   price: number;
-  purpose: "premium_1_day" | "premium_7_days" | "premium_30_days";
+  purpose: PremiumPurpose;
   popular?: boolean;
-};
-
-type UserRole = "job_seeker" | "employer" | "moderator" | "super_admin" | null;
-
-type PremiumRecord = {
-  expires_at: string | null;
-  status: string | null;
-} | null;
-
-type PremiumIntentResponse = {
-  intent_id?: string | null;
-  payment_reference?: string | null;
-  error?: string | null;
 };
 
 const PLANS: Plan[] = [
@@ -85,6 +84,8 @@ export default function PremiumScreen() {
   const [role, setRole] = useState<UserRole>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const resumeAttemptedRef = useRef(false);
+
   const fetchPremium = useCallback(async () => {
     if (!session) {
       setPremiumRecord(null);
@@ -98,32 +99,17 @@ export default function PremiumScreen() {
     setError(null);
 
     try {
-      const [
-        { data: profile, error: profileError },
-        { data: premium, error: premiumError },
-      ] = await Promise.all([
-        supabase
-          .from("profiles")
-          .select("role")
-          .eq("id", session.user.id)
-          .maybeSingle(),
-        supabase
-          .from("job_seeker_premium")
-          .select("expires_at, status")
-          .eq("user_id", session.user.id)
-          .maybeSingle(),
-      ]);
+      const result = await fetchPremiumStatus(session.user.id);
 
-      if (profileError || premiumError) {
-        throw profileError ?? premiumError;
+      if (!result.ok) {
+        setRole(null);
+        setPremiumRecord(null);
+        setError(result.error.message);
+        return;
       }
 
-      setRole((profile?.role as UserRole) ?? null);
-      setPremiumRecord((premium as PremiumRecord) ?? null);
-    } catch {
-      setRole(null);
-      setPremiumRecord(null);
-      setError("We could not load your premium status right now.");
+      setRole(result.data.role);
+      setPremiumRecord(result.data.premiumRecord);
     } finally {
       setChecking(false);
     }
@@ -132,6 +118,70 @@ export default function PremiumScreen() {
   useEffect(() => {
     void fetchPremium();
   }, [fetchPremium]);
+
+  useEffect(() => {
+    if (!session) {
+      resumeAttemptedRef.current = false;
+    }
+  }, [session]);
+
+  const createPremiumIntentAndNavigate = useCallback(
+    async (plan: Pick<Plan, "purpose" | "label" | "price">) => {
+      const result = await createPremiumIntent(plan.purpose);
+
+      if (!result.ok) {
+        setError(result.error.message);
+        return false;
+      }
+
+      navigation.navigate("PremiumPayment", {
+        purpose: plan.purpose,
+        planLabel: plan.label,
+        amount: plan.price,
+        intentId: result.data.intentId,
+        paymentReference: result.data.paymentReference,
+      });
+
+      return true;
+    },
+    [navigation],
+  );
+
+  useEffect(() => {
+    if (!session || checking) return;
+    if (resumeAttemptedRef.current) return;
+    if (role !== "job_seeker") return;
+
+    let cancelled = false;
+
+    const resumePremiumUpgrade = async () => {
+      const pending = await peekPendingIntent();
+
+      if (!pending || pending.kind !== "premium_upgrade") {
+        return;
+      }
+
+      resumeAttemptedRef.current = true;
+
+      const selectedPlan = pending.payload.plan;
+
+      const navigated = await createPremiumIntentAndNavigate({
+        purpose: selectedPlan.purpose,
+        label: selectedPlan.label,
+        price: selectedPlan.amount,
+      });
+
+      if (!cancelled && navigated) {
+        await clearPendingIntent();
+      }
+    };
+
+    void resumePremiumUpgrade();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [session, checking, role, createPremiumIntentAndNavigate]);
 
   const now = Date.now();
 
@@ -154,10 +204,19 @@ export default function PremiumScreen() {
     async (plan: Plan) => {
       if (loadingPlan || checking) return;
 
+      setError(null);
+
       if (!session) {
-        setPendingIntent({
-          intent: "premium",
-          returnTo: "Premium",
+        await setPendingIntent({
+          kind: "premium_upgrade",
+          payload: {
+            source: "guest_upgrade",
+            plan: {
+              purpose: plan.purpose,
+              label: plan.label,
+              amount: plan.price,
+            },
+          },
         });
 
         navigation.navigate("AuthModal", {
@@ -171,6 +230,13 @@ export default function PremiumScreen() {
         return;
       }
 
+      if (role === null) {
+        setError(
+          "We are still finalizing your account. Please wait a moment and try again.",
+        );
+        return;
+      }
+
       if (role !== "job_seeker") {
         setError(
           "Premium nationwide browsing is only available to job seekers.",
@@ -178,43 +244,26 @@ export default function PremiumScreen() {
         return;
       }
 
+      setLoadingPlan(plan.id);
+
       try {
-        setLoadingPlan(plan.id);
-        setError(null);
-
-        const { data, error } = await supabase.functions.invoke(
-          "create_premium_intent",
-          {
-            body: { purpose: plan.purpose },
-          },
-        );
-
-        if (error) throw error;
-
-        const payload = (data ?? {}) as PremiumIntentResponse;
-
-        if (payload.error) {
-          throw new Error(payload.error);
-        }
-
-        if (!payload.intent_id && !payload.payment_reference) {
-          throw new Error("Premium payment session could not be created.");
-        }
-
-        navigation.navigate("PremiumPayment", {
+        await createPremiumIntentAndNavigate({
           purpose: plan.purpose,
-          planLabel: plan.label,
-          amount: plan.price,
-          intentId: payload.intent_id ?? null,
-          paymentReference: payload.payment_reference ?? null,
+          label: plan.label,
+          price: plan.price,
         });
-      } catch (e: any) {
-        setError(e?.message ?? "Unable to continue. Please try again.");
       } finally {
         setLoadingPlan(null);
       }
     },
-    [checking, loadingPlan, navigation, role, session],
+    [
+      checking,
+      loadingPlan,
+      navigation,
+      role,
+      session,
+      createPremiumIntentAndNavigate,
+    ],
   );
 
   const contentStyle = useMemo<ViewStyle>(

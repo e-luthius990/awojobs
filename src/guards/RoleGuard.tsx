@@ -1,125 +1,168 @@
-import React, { useCallback } from "react";
-import { View, Text, Pressable, StyleSheet } from "react-native";
+import React, { useCallback, useMemo, type ReactNode } from "react";
+import { View, type ViewStyle } from "react-native";
 import { useNavigation } from "@react-navigation/native";
 
 import { useSession } from "../state/useSession";
 import { useProfile } from "../state/useProfile";
 
+import { AppScreen } from "../ui/AppScreen";
+import { AppCard } from "../ui/AppCard";
+import { AppButton } from "../ui/AppButton";
+import { AppText } from "../ui/AppText";
+import { SkeletonCard } from "../ui/Skeleton";
+import { useTheme } from "../theme/useTheme";
+
 type Role = "employer" | "job_seeker" | "moderator" | "super_admin";
 
 type Props = {
   allowed: Role[];
-  children: React.ReactNode;
+  children: ReactNode;
 };
+
+function isAllowedRole(value: unknown): value is Role {
+  return (
+    value === "employer" ||
+    value === "job_seeker" ||
+    value === "moderator" ||
+    value === "super_admin"
+  );
+}
 
 export function RoleGuard({ allowed, children }: Props) {
   const navigation = useNavigation<any>();
+  const { theme } = useTheme();
+
   const { session, loading: sessionLoading } = useSession();
   const userId = session?.user?.id ?? null;
   const { profile, loading: profileLoading } = useProfile(userId);
 
+  const resolvedRole: Role | null = isAllowedRole(profile?.role)
+    ? profile.role
+    : null;
+
   const goToLogin = useCallback(() => {
-    navigation.navigate("PostJobTab"); // or Auth screen
+    navigation.getParent()?.navigate("AuthModal", {
+      screen: "Login",
+    });
   }, [navigation]);
 
-  const goToFeed = useCallback(() => {
-    navigation.navigate("FeedTab");
+  const goToJobs = useCallback(() => {
+    navigation.getParent()?.navigate("App");
   }, [navigation]);
 
-  /* ================= HYDRATION ================= */
+  const contentStyle = useMemo<ViewStyle>(
+    () => ({
+      gap: theme.spacing.lg,
+      width: "100%",
+    }),
+    [theme.spacing.lg],
+  );
+
+  const cardStyle = useMemo<ViewStyle>(
+    () => ({
+      gap: theme.spacing.md,
+    }),
+    [theme.spacing.md],
+  );
 
   if (sessionLoading || profileLoading) {
-    return <View style={styles.skeleton} />;
+    return (
+      <AppScreen centerContent>
+        <View style={contentStyle}>
+          <SkeletonCard lines={3} />
+        </View>
+      </AppScreen>
+    );
   }
-
-  /* ================= NOT AUTHENTICATED ================= */
 
   if (!session) {
     return (
-      <View style={styles.container}>
-        <Text style={styles.title}>Sign in required</Text>
-        <Text style={styles.subtitle}>Please login to continue.</Text>
+      <AppScreen centerContent>
+        <View style={contentStyle}>
+          <AppCard variant="elevated" padding="lg">
+            <View style={cardStyle}>
+              <AppText variant="titleLg">Sign in required</AppText>
+              <AppText variant="bodySm" tone="secondary">
+                Please sign in to continue.
+              </AppText>
 
-        <Pressable onPress={goToLogin} style={styles.primaryButton}>
-          <Text style={styles.primaryText}>Login</Text>
-        </Pressable>
+              <AppButton title="Login" onPress={goToLogin} variant="primary" />
 
-        <Pressable onPress={goToFeed}>
-          <Text style={styles.secondaryText}>Back to jobs</Text>
-        </Pressable>
-      </View>
+              <AppButton
+                title="Back to Jobs"
+                onPress={goToJobs}
+                variant="secondary"
+              />
+            </View>
+          </AppCard>
+        </View>
+      </AppScreen>
     );
   }
-
-  /* ================= PROFILE ERROR ================= */
 
   if (!profile) {
     return (
-      <View style={styles.container}>
-        <Text style={styles.title}>Profile unavailable</Text>
-        <Text style={styles.subtitle}>We couldn’t load your profile.</Text>
+      <AppScreen centerContent>
+        <View style={contentStyle}>
+          <AppCard variant="elevated" padding="lg">
+            <View style={cardStyle}>
+              <AppText variant="titleLg">Profile unavailable</AppText>
+              <AppText variant="bodySm" tone="secondary">
+                We couldn’t load your profile.
+              </AppText>
 
-        <Pressable onPress={goToFeed} style={styles.primaryButton}>
-          <Text style={styles.primaryText}>Back to Jobs</Text>
-        </Pressable>
-      </View>
+              <AppButton
+                title="Back to Jobs"
+                onPress={goToJobs}
+                variant="primary"
+              />
+            </View>
+          </AppCard>
+        </View>
+      </AppScreen>
     );
   }
 
-  /* ================= ROLE CHECK ================= */
-
-  if (!allowed.includes(profile.role as Role)) {
+  if (!resolvedRole || !allowed.includes(resolvedRole)) {
     return (
-      <View style={styles.container}>
-        <Text style={styles.title}>Access restricted</Text>
-        <Text style={styles.subtitle}>
-          You do not have permission to access this section.
-        </Text>
+      <AppScreen centerContent>
+        <View style={contentStyle}>
+          <AppCard variant="elevated" padding="lg">
+            <View style={cardStyle}>
+              <AppText variant="titleLg">Access restricted</AppText>
+              <AppText variant="bodySm" tone="secondary">
+                You do not have permission to access this section.
+              </AppText>
 
-        <Pressable onPress={goToFeed} style={styles.primaryButton}>
-          <Text style={styles.primaryText}>Back to Jobs</Text>
-        </Pressable>
-      </View>
+              <AppButton
+                title="Back to Jobs"
+                onPress={goToJobs}
+                variant="primary"
+              />
+            </View>
+          </AppCard>
+        </View>
+      </AppScreen>
     );
   }
-
-  /* ================= AUTHORIZED ================= */
 
   return <>{children}</>;
 }
 
-const styles = StyleSheet.create({
-  skeleton: {
-    flex: 1,
-    backgroundColor: "#ffffff",
-  },
-  container: {
-    flex: 1,
-    justifyContent: "center",
-    padding: 20,
-  },
-  title: {
-    fontSize: 18,
-    fontWeight: "700",
-    marginBottom: 8,
-  },
-  subtitle: {
-    opacity: 0.7,
-    marginBottom: 20,
-  },
-  primaryButton: {
-    backgroundColor: "#111",
-    paddingVertical: 14,
-    borderRadius: 12,
-    marginBottom: 14,
-  },
-  primaryText: {
-    color: "#fff",
-    textAlign: "center",
-    fontWeight: "600",
-  },
-  secondaryText: {
-    textAlign: "center",
-    opacity: 0.8,
-  },
-});
+export function RequireModerator({ children }: { children: ReactNode }) {
+  return (
+    <RoleGuard allowed={["moderator", "super_admin"]}>{children}</RoleGuard>
+  );
+}
+
+export function RequireSuperAdmin({ children }: { children: ReactNode }) {
+  return <RoleGuard allowed={["super_admin"]}>{children}</RoleGuard>;
+}
+
+export function RequireEmployer({ children }: { children: ReactNode }) {
+  return <RoleGuard allowed={["employer"]}>{children}</RoleGuard>;
+}
+
+export function RequireJobSeeker({ children }: { children: ReactNode }) {
+  return <RoleGuard allowed={["job_seeker"]}>{children}</RoleGuard>;
+}

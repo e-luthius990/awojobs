@@ -5,12 +5,7 @@ import React, {
   useMemo,
   type ViewStyle,
 } from "react";
-import {
-  View,
-  FlatList,
-  ActivityIndicator,
-  RefreshControl,
-} from "react-native";
+import { View, FlatList, RefreshControl, Pressable } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { supabase } from "../../core/supabase";
 
@@ -28,7 +23,6 @@ type FlaggedJob = {
   title: string;
   employer_id: string;
   created_at: string;
-  reports_count: number;
 };
 
 type ModeratorSummary = {
@@ -46,6 +40,7 @@ export default function ModeratorDashboard() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
+  const [logoutLoading, setLogoutLoading] = useState(false);
 
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
@@ -59,19 +54,48 @@ export default function ModeratorDashboard() {
         supabase.rpc("moderator_dashboard_summary"),
         supabase
           .from("jobs")
-          .select("id,title,employer_id,created_at,reports_count")
+          .select("id,title,employer_id,created_at")
           .eq("status", "flagged")
           .order("created_at", { ascending: false })
           .limit(20),
       ]);
 
-      if (summaryError) throw summaryError;
-      if (jobsError) throw jobsError;
+      if (summaryError) {
+        console.error("moderator_dashboard_summary failed", {
+          message: summaryError.message,
+          details: summaryError.details,
+          hint: summaryError.hint,
+          code: summaryError.code,
+        });
+        throw summaryError;
+      }
 
-      setSummary(summaryData ?? null);
+      if (jobsError) {
+        console.error("flagged jobs query failed", {
+          message: jobsError.message,
+          details: jobsError.details,
+          hint: jobsError.hint,
+          code: jobsError.code,
+        });
+        throw jobsError;
+      }
+
+      const normalizedSummary = Array.isArray(summaryData)
+        ? ((summaryData[0] as ModeratorSummary | undefined) ?? null)
+        : (summaryData as ModeratorSummary | null);
+
+      setSummary(normalizedSummary);
       setFlaggedJobs((jobs ?? []) as FlaggedJob[]);
-    } catch {
-      setError("Failed to load moderator data.");
+    } catch (err: any) {
+      console.error("ModeratorDashboard load failed", {
+        message: err?.message,
+        details: err?.details,
+        hint: err?.hint,
+        code: err?.code,
+      });
+
+      setError(err?.message || "Failed to load moderator data.");
+
       if (!silent) {
         setSummary(null);
         setFlaggedJobs([]);
@@ -103,17 +127,42 @@ export default function ModeratorDashboard() {
     };
   }, [load]);
 
+  const handleLogout = useCallback(async () => {
+    if (logoutLoading) return;
+
+    try {
+      setLogoutLoading(true);
+      setError(null);
+
+      const { error: signOutError } = await supabase.auth.signOut();
+      if (signOutError) throw signOutError;
+    } catch (err: any) {
+      console.error("ModeratorDashboard logout failed", {
+        message: err?.message,
+        details: err?.details,
+        hint: err?.hint,
+        code: err?.code,
+      });
+      setError(err?.message || "Failed to log out.");
+    } finally {
+      setLogoutLoading(false);
+    }
+  }, [logoutLoading]);
+
   const approveJob = useCallback(async (id: string) => {
     try {
       setActionLoadingId(id);
       setError(null);
 
-      const { error } = await supabase
+      const { data, error } = await supabase
         .from("jobs")
         .update({ status: "active" })
-        .eq("id", id);
+        .eq("id", id)
+        .select("id")
+        .maybeSingle();
 
       if (error) throw error;
+      if (!data) throw new Error("Job not updated");
 
       setFlaggedJobs((prev) => prev.filter((job) => job.id !== id));
       setSummary((prev) =>
@@ -125,8 +174,15 @@ export default function ModeratorDashboard() {
             }
           : prev,
       );
-    } catch {
-      setError("Failed to approve job.");
+    } catch (err: any) {
+      console.error("approveJob failed", {
+        id,
+        message: err?.message,
+        details: err?.details,
+        hint: err?.hint,
+        code: err?.code,
+      });
+      setError(err?.message || "Failed to approve job.");
     } finally {
       setActionLoadingId(null);
     }
@@ -137,12 +193,15 @@ export default function ModeratorDashboard() {
       setActionLoadingId(id);
       setError(null);
 
-      const { error } = await supabase
+      const { data, error } = await supabase
         .from("jobs")
-        .update({ status: "removed" })
-        .eq("id", id);
+        .update({ status: "deleted" })
+        .eq("id", id)
+        .select("id")
+        .maybeSingle();
 
       if (error) throw error;
+      if (!data) throw new Error("Job not updated");
 
       setFlaggedJobs((prev) => prev.filter((job) => job.id !== id));
       setSummary((prev) =>
@@ -154,8 +213,15 @@ export default function ModeratorDashboard() {
             }
           : prev,
       );
-    } catch {
-      setError("Failed to remove job.");
+    } catch (err: any) {
+      console.error("removeJob failed", {
+        id,
+        message: err?.message,
+        details: err?.details,
+        hint: err?.hint,
+        code: err?.code,
+      });
+      setError(err?.message || "Failed to remove job.");
     } finally {
       setActionLoadingId(null);
     }
@@ -184,6 +250,39 @@ export default function ModeratorDashboard() {
       marginBottom: theme.spacing.xs,
     }),
     [theme.spacing.sm, theme.spacing.xs],
+  );
+
+  const headerRowStyle = useMemo<ViewStyle>(
+    () => ({
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: theme.spacing.md,
+    }),
+    [theme.spacing.md],
+  );
+
+  const logoutButtonStyle = useMemo<ViewStyle>(
+    () => ({
+      flexDirection: "row",
+      alignItems: "center",
+      gap: theme.spacing.xs,
+      paddingHorizontal: theme.spacing.sm,
+      paddingVertical: theme.spacing.xs,
+      borderRadius: theme.radius.md,
+      backgroundColor: theme.colors.surface,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      opacity: logoutLoading ? 0.6 : 1,
+    }),
+    [
+      theme.spacing.xs,
+      theme.spacing.sm,
+      theme.radius.md,
+      theme.colors.surface,
+      theme.colors.border,
+      logoutLoading,
+    ],
   );
 
   if (loading) {
@@ -215,9 +314,27 @@ export default function ModeratorDashboard() {
         contentContainerStyle={contentStyle}
         ListHeaderComponent={
           <View style={{ gap: theme.spacing.md }}>
-            <AppText variant="h2" weight="700">
-              Moderator Panel
-            </AppText>
+            <View style={headerRowStyle}>
+              <AppText variant="h2" weight="700">
+                Moderator Panel
+              </AppText>
+
+              <Pressable
+                onPress={() => void handleLogout()}
+                disabled={logoutLoading}
+                hitSlop={8}
+                style={logoutButtonStyle}
+              >
+                <Ionicons
+                  name="log-out-outline"
+                  size={18}
+                  color={theme.colors.text}
+                />
+                <AppText variant="bodySm" weight="600">
+                  {logoutLoading ? "Logging out..." : "Logout"}
+                </AppText>
+              </Pressable>
+            </View>
 
             {error ? <InlineAlert tone="error" message={error} /> : null}
 
@@ -334,8 +451,7 @@ function FlaggedJobCard({
             </AppText>
 
             <AppText variant="caption" tone="secondary">
-              {item.reports_count} reports •{" "}
-              {new Date(item.created_at).toLocaleDateString()}
+              Flagged • {new Date(item.created_at).toLocaleDateString()}
             </AppText>
           </View>
 

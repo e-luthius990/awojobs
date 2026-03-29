@@ -9,23 +9,31 @@ import ResetCodeScreen from "../screens/auth/ResetCodeScreen";
 import VerifyOtpScreen from "../screens/auth/VerifyOtpScreen";
 
 export type AuthRole = "employer" | "job_seeker";
-export type AuthIntent = "premium_upgrade" | undefined;
+export type AuthIntent = "premium_upgrade" | "post_job";
+
+export type LoginRouteParams = {
+  role?: AuthRole;
+  forcedRole?: AuthRole;
+  intent?: AuthIntent;
+};
+
+export type RegisterRouteParams = {
+  role?: AuthRole;
+  forcedRole?: AuthRole;
+  intent?: AuthIntent;
+};
+
+export type VerifyOtpRouteParams = {
+  phone: string;
+  password: string;
+  role: AuthRole;
+  intent?: AuthIntent;
+};
 
 export type AuthStackParamList = {
-  Login: undefined;
-  Register:
-    | {
-        role?: AuthRole;
-        forcedRole?: AuthRole;
-        intent?: AuthIntent;
-      }
-    | undefined;
-  VerifyOtp: {
-    phone: string;
-    password: string;
-    role: AuthRole;
-    intent?: AuthIntent;
-  };
+  Login: LoginRouteParams | undefined;
+  Register: RegisterRouteParams | undefined;
+  VerifyOtp: VerifyOtpRouteParams;
   ForgotPassword: undefined;
   ResetCode: { phone: string };
 };

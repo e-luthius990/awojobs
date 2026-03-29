@@ -15,8 +15,6 @@ import { AppButton } from "../../ui/AppButton";
 import { InlineAlert } from "../../ui/InlineAlert";
 import { StatusBadge } from "../../ui/StatusBadge";
 
-/* ================= TYPES ================= */
-
 type RouteProps = RouteProp<PostJobStackParamList, "Payment">;
 type NavProps = NativeStackNavigationProp<PostJobStackParamList, "Payment">;
 
@@ -26,7 +24,7 @@ type Sponsorship =
   | "sponsored_week"
   | "sponsored_month";
 
-/* ================= PRICES ================= */
+type PaymentMode = "create" | "renew";
 
 const PRICES = {
   job_post: 2000,
@@ -65,6 +63,9 @@ const SPONSOR_OPTIONS: {
 
 type CreateJobIntentResponse = {
   intent_id?: string | null;
+  payment_reference?: string | null;
+  amount?: number | null;
+  job_id?: string | null;
   error?: string | null;
   message?: string | null;
 };
@@ -73,18 +74,32 @@ function formatCurrency(amount: number) {
   return `UGX ${amount.toLocaleString()}`;
 }
 
-/* ================= SCREEN ================= */
+function isValidMode(value: unknown): value is PaymentMode {
+  return value === "create" || value === "renew";
+}
+
+function createIdempotencyKey(draftId: string, mode: PaymentMode) {
+  return `${draftId}:${mode}:${Date.now()}:${Math.random()
+    .toString(36)
+    .slice(2, 14)}`;
+}
 
 export default function PaymentScreen() {
   const route = useRoute<RouteProps>();
   const navigation = useNavigation<NavProps>();
   const { theme } = useTheme();
 
-  const { draftId, mode = "create" } = route.params;
+  const rawDraftId = route.params?.draftId;
+  const rawMode = route.params?.mode;
+
+  const draftId = typeof rawDraftId === "string" ? rawDraftId : "";
+  const mode: PaymentMode = isValidMode(rawMode) ? rawMode : "create";
 
   const [sponsorship, setSponsorship] = useState<Sponsorship>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const [idempotencyKey] = useState(() => createIdempotencyKey(draftId, mode));
 
   const total = useMemo(() => {
     const base = PRICES.job_post;
@@ -172,23 +187,29 @@ export default function PaymentScreen() {
   const proceedToPay = useCallback(async () => {
     if (loading) return;
 
+    if (!draftId) {
+      setError("Missing draft id.");
+      return;
+    }
+
     try {
       setLoading(true);
       setError(null);
 
-      const { data, error } = await supabase.functions.invoke(
+      const { data, error: invokeError } = await supabase.functions.invoke(
         "create_job_intent",
         {
           body: {
             draft_id: draftId,
             sponsorship,
             mode,
+            idempotency_key: idempotencyKey,
           },
         },
       );
 
-      if (error) {
-        throw error;
+      if (invokeError) {
+        throw invokeError;
       }
 
       const payload = (data ?? {}) as CreateJobIntentResponse;
@@ -197,13 +218,16 @@ export default function PaymentScreen() {
         throw new Error(payload.error);
       }
 
-      if (!payload.intent_id) {
+      if (typeof payload.intent_id !== "string" || !payload.intent_id.trim()) {
         throw new Error(payload.message ?? "Invalid payment response.");
       }
 
       navigation.replace("PaymentPending", {
         intentId: payload.intent_id,
-        jobId: draftId,
+        jobId:
+          typeof payload.job_id === "string" && payload.job_id.trim()
+            ? payload.job_id
+            : draftId,
         flow: "job_post",
       });
     } catch (e: any) {
@@ -211,7 +235,7 @@ export default function PaymentScreen() {
     } finally {
       setLoading(false);
     }
-  }, [draftId, loading, mode, navigation, sponsorship]);
+  }, [draftId, idempotencyKey, loading, mode, navigation, sponsorship]);
 
   return (
     <AppScreen scroll>
@@ -238,7 +262,7 @@ export default function PaymentScreen() {
         <InlineAlert
           tone="info"
           title="Before your job goes live"
-          message="Your job will be published after payment is successfully created and processed."
+          message="Your job will go live only after payment is successfully confirmed."
         />
 
         <AppCard variant="elevated" padding="lg">
@@ -368,7 +392,7 @@ export default function PaymentScreen() {
             title={payButtonLabel}
             onPress={proceedToPay}
             loading={loading}
-            disabled={loading}
+            disabled={loading || !draftId}
             variant="primary"
           />
 

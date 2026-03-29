@@ -8,6 +8,49 @@ import { syncSessionFromSupabase } from "../state/useSession";
 const REQUEST_TIMEOUT_MS = 10000;
 const SYNTHETIC_EMAIL_DOMAIN = "awojobs.app";
 
+export type UserRole =
+  | "job_seeker"
+  | "employer"
+  | "moderator"
+  | "super_admin";
+
+export type AppErrorCode =
+  | "AUTH_REQUIRED"
+  | "SESSION_EXPIRED"
+  | "FORBIDDEN"
+  | "NOT_FOUND"
+  | "VALIDATION_ERROR"
+  | "RATE_LIMITED"
+  | "NETWORK_ERROR"
+  | "UNKNOWN_ERROR";
+
+export type AppError = {
+  code: AppErrorCode;
+  message: string;
+  retryable: boolean;
+  fieldErrors?: Record<string, string>;
+};
+
+export type AppResult<T> =
+  | { ok: true; data: T }
+  | { ok: false; error: AppError };
+
+type FunctionErrorPayload = {
+  code?: unknown;
+  message?: unknown;
+  retryable?: unknown;
+  fieldErrors?: unknown;
+  error?: unknown;
+  action?: unknown;
+};
+
+type DeleteAccountAction = "deleted" | "closed";
+
+type DeleteAccountResult = {
+  success: true;
+  action: DeleteAccountAction;
+};
+
 /* =====================================================
    TIMEOUT
 ===================================================== */
@@ -49,20 +92,77 @@ function createSyntheticEmail(phone: string): string {
   return `${phone.replace(/^\+/, "")}@${SYNTHETIC_EMAIL_DOMAIN}`;
 }
 
-function extractInvokeError(data: unknown, fallback: string): string | null {
-  if (!data || typeof data !== "object") return null;
-
-  const maybeError =
-    "error" in data && typeof (data as { error?: unknown }).error === "string"
-      ? (data as { error: string }).error
-      : null;
-
-  if (!maybeError) return null;
-  return maybeError || fallback;
+function makeError(
+  code: AppErrorCode,
+  message: string,
+  retryable: boolean,
+  fieldErrors?: Record<string, string>,
+): AppError {
+  return { code, message, retryable, fieldErrors };
 }
 
-function classifyAuthError(err: unknown, fallback: string): Error {
-  const normalized = normalizeMessage(err);
+function asObject(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function parseFieldErrors(value: unknown): Record<string, string> | undefined {
+  const obj = asObject(value);
+  if (!obj) return undefined;
+
+  const entries = Object.entries(obj).filter(
+    ([, v]) => typeof v === "string" && v.trim().length > 0,
+  ) as [string, string][];
+
+  return entries.length ? Object.fromEntries(entries) : undefined;
+}
+
+function mapStructuredErrorPayload(
+  payload: unknown,
+): AppError | null {
+  const obj = asObject(payload);
+  if (!obj) return null;
+
+  const code = typeof obj.code === "string" ? obj.code : null;
+  const message = typeof obj.message === "string" ? obj.message : null;
+  const retryable = typeof obj.retryable === "boolean" ? obj.retryable : false;
+  const fieldErrors = parseFieldErrors(obj.fieldErrors);
+
+  if (!code || !message) return null;
+
+  switch (code) {
+    case "AUTH_REQUIRED":
+      return makeError("AUTH_REQUIRED", "Please sign in again.", retryable, fieldErrors);
+    case "SESSION_EXPIRED":
+      return makeError(
+        "SESSION_EXPIRED",
+        "Your session has ended. Please sign in again.",
+        retryable,
+        fieldErrors,
+      );
+    case "FORBIDDEN":
+      return makeError("FORBIDDEN", message, retryable, fieldErrors);
+    case "NOT_FOUND":
+      return makeError("NOT_FOUND", message, retryable, fieldErrors);
+    case "VALIDATION_ERROR":
+      return makeError("VALIDATION_ERROR", message, retryable, fieldErrors);
+    case "RATE_LIMITED":
+    case "RATE_LIMIT_DEVICE":
+    case "RATE_LIMIT_IP":
+      return makeError(
+        "RATE_LIMITED",
+        "Please wait a moment before trying again.",
+        true,
+        fieldErrors,
+      );
+    default:
+      return makeError("UNKNOWN_ERROR", message, retryable, fieldErrors);
+  }
+}
+
+function mapLegacyInvokeError(errorText: string, fallback: string): AppError {
+  const normalized = errorText.trim().toLowerCase();
 
   if (
     normalized.includes("network request failed") ||
@@ -72,8 +172,10 @@ function classifyAuthError(err: unknown, fallback: string): Error {
     normalized.includes("request timed out") ||
     normalized.includes("timed out")
   ) {
-    return new Error(
+    return makeError(
+      "NETWORK_ERROR",
       "No internet connection. Please check your network and try again.",
+      true,
     );
   }
 
@@ -84,7 +186,11 @@ function classifyAuthError(err: unknown, fallback: string): Error {
     normalized.includes("retry later") ||
     normalized.includes("cooldown")
   ) {
-    return new Error("Please wait a moment before trying again.");
+    return makeError(
+      "RATE_LIMITED",
+      "Please wait a moment before trying again.",
+      true,
+    );
   }
 
   if (
@@ -94,54 +200,160 @@ function classifyAuthError(err: unknown, fallback: string): Error {
     normalized.includes("unauthorized") ||
     normalized.includes("401")
   ) {
-    return new Error("Invalid phone or password.");
+    return makeError(
+      "FORBIDDEN",
+      "Invalid phone or password.",
+      false,
+    );
   }
 
   if (normalized.includes("invalid uganda phone number")) {
-    return new Error("Invalid Uganda phone number.");
+    return makeError(
+      "VALIDATION_ERROR",
+      "Invalid Uganda phone number.",
+      false,
+      { phone: "Invalid Uganda phone number." },
+    );
   }
 
   if (normalized.includes("full name is required")) {
-    return new Error("Full name is required.");
+    return makeError(
+      "VALIDATION_ERROR",
+      "Full name is required.",
+      false,
+      { full_name: "Full name is required." },
+    );
   }
 
   if (normalized.includes("invalid role")) {
-    return new Error("Invalid role.");
+    return makeError(
+      "VALIDATION_ERROR",
+      "Invalid role.",
+      false,
+      { role: "Invalid role." },
+    );
+  }
+
+  if (
+    normalized.includes("business name is too long") ||
+    normalized.includes("enter at least 2 characters")
+  ) {
+    return makeError(
+      "VALIDATION_ERROR",
+      fallback,
+      false,
+      { business_name: fallback },
+    );
   }
 
   if (
     normalized.includes("password must be at least 8 characters") ||
     normalized.includes("include letters and numbers")
   ) {
-    return new Error(
+    return makeError(
+      "VALIDATION_ERROR",
       "Password must be at least 8 characters and include letters and numbers.",
+      false,
+      {
+        password:
+          "Password must be at least 8 characters and include letters and numbers.",
+      },
     );
   }
 
   if (normalized.includes("invalid verification code")) {
-    return new Error("Invalid verification code.");
+    return makeError(
+      "VALIDATION_ERROR",
+      "Invalid verification code.",
+      false,
+      { otp: "Invalid verification code." },
+    );
   }
 
   if (
-    normalized.includes("verification failed") ||
-    normalized.includes("failed to send verification code") ||
-    normalized.includes("unable to resend code") ||
-    normalized.includes("unable to delete account") ||
-    normalized.includes("unable to logout") ||
-    normalized.includes("unable to process request") ||
-    normalized.includes("reset failed")
+    normalized.includes("reauth") ||
+    normalized.includes("re-auth") ||
+    normalized.includes("recent login")
   ) {
-    return new Error(fallback);
+    return makeError(
+      "FORBIDDEN",
+      "Please confirm your password and try again.",
+      false,
+    );
   }
 
-  return new Error(fallback);
+  if (normalized.includes("role_not_deletable")) {
+    return makeError(
+      "FORBIDDEN",
+      "This account cannot be deleted from the app.",
+      false,
+    );
+  }
+
+  if (normalized.includes("employer_must_close_account")) {
+    return makeError(
+      "FORBIDDEN",
+      "Employer accounts cannot be permanently deleted here. Close the account instead.",
+      false,
+    );
+  }
+
+  if (
+    normalized.includes("applications exist") ||
+    normalized.includes("close or expire the job instead") ||
+    normalized.includes("job_delete_blocked_by_applications")
+  ) {
+    return makeError(
+      "FORBIDDEN",
+      "This employer account cannot be deleted because some jobs already have applications.",
+      false,
+    );
+  }
+
+  return makeError("UNKNOWN_ERROR", fallback, false);
 }
 
-async function syncSessionSafely() {
+function normalizeUnknownError(err: unknown, fallback: string): AppError {
+  const structured = mapStructuredErrorPayload(err);
+  if (structured) return structured;
+
+  const message = toMessage(err).trim();
+  if (message) {
+    return mapLegacyInvokeError(message, fallback);
+  }
+
+  return makeError("UNKNOWN_ERROR", fallback, false);
+}
+
+async function syncSessionSafely(): Promise<void> {
   try {
     await syncSessionFromSupabase();
   } catch {
-    // Keep auth result successful even if sync refresh fails.
+    // session sync should not hide a successful auth action result
+  }
+}
+
+async function checkedSignOut(
+  fallback = "Unable to logout.",
+): Promise<AppResult<true>> {
+  try {
+    const { error } = await withTimeout(supabase.auth.signOut());
+
+    if (error) {
+      return {
+        ok: false,
+        error: normalizeUnknownError(error, fallback),
+      };
+    }
+
+    await syncSessionSafely();
+
+    return { ok: true, data: true };
+  } catch (err) {
+    return {
+      ok: false,
+      error: normalizeUnknownError(err, fallback),
+    };
   }
 }
 
@@ -164,7 +376,12 @@ function normalizeUgPhone(phone: string): string {
     return `256${cleaned}`;
   }
 
-  throw new Error("Invalid Uganda phone number.");
+  throw makeError(
+    "VALIDATION_ERROR",
+    "Invalid Uganda phone number.",
+    false,
+    { phone: "Invalid Uganda phone number." },
+  );
 }
 
 /* =====================================================
@@ -173,9 +390,71 @@ function normalizeUgPhone(phone: string): string {
 
 function validatePassword(password: string) {
   if (!/^(?=.*[A-Za-z])(?=.*\d).{8,}$/.test(password)) {
-    throw new Error(
+    throw makeError(
+      "VALIDATION_ERROR",
       "Password must be at least 8 characters and include letters and numbers.",
+      false,
+      {
+        password:
+          "Password must be at least 8 characters and include letters and numbers.",
+      },
     );
+  }
+}
+
+/* =====================================================
+   EDGE/FUNCTION RESPONSE NORMALIZATION
+===================================================== */
+
+function extractLegacyInvokeError(
+  data: unknown,
+  fallback: string,
+): AppError | null {
+  const obj = asObject(data);
+  if (!obj) return null;
+
+  const maybeError =
+    typeof obj.error === "string" && obj.error.trim().length > 0
+      ? obj.error
+      : null;
+
+  if (!maybeError) return null;
+  return mapLegacyInvokeError(maybeError, fallback);
+}
+
+async function invokeFunction<TData = unknown>(
+  name: string,
+  body: unknown,
+  fallback: string,
+): Promise<AppResult<TData>> {
+  try {
+    const { data, error } = await withTimeout(
+      supabase.functions.invoke(name, { body }),
+    );
+
+    if (error) {
+      return {
+        ok: false,
+        error: normalizeUnknownError(error, fallback),
+      };
+    }
+
+    const structured = mapStructuredErrorPayload(data);
+    if (structured) {
+      return { ok: false, error: structured };
+    }
+
+    const legacyError = extractLegacyInvokeError(data, fallback);
+    if (legacyError) {
+      return { ok: false, error: legacyError };
+    }
+
+    return { ok: true, data: data as TData };
+  } catch (err) {
+    return {
+      ok: false,
+      error: normalizeUnknownError(err, fallback),
+    };
   }
 }
 
@@ -188,47 +467,87 @@ export async function requestRegistrationOtp(params: {
   full_name: string;
   role: "employer" | "job_seeker";
   password: string;
-}) {
+  business_name?: string;
+}): Promise<AppResult<{ success: true }>> {
   try {
     const phone = normalizeUgPhone(params.phone);
 
     const fullName = params.full_name?.trim();
     if (!fullName || fullName.length < 2) {
-      throw new Error("Full name is required.");
+      return {
+        ok: false,
+        error: makeError(
+          "VALIDATION_ERROR",
+          "Full name is required.",
+          false,
+          { full_name: "Full name is required." },
+        ),
+      };
     }
 
     if (!["employer", "job_seeker"].includes(params.role)) {
-      throw new Error("Invalid role.");
+      return {
+        ok: false,
+        error: makeError(
+          "VALIDATION_ERROR",
+          "Invalid role.",
+          false,
+          { role: "Invalid role." },
+        ),
+      };
+    }
+
+    const businessName =
+      params.role === "employer" && typeof params.business_name === "string"
+        ? params.business_name.trim()
+        : "";
+
+    if (businessName && businessName.length < 2) {
+      return {
+        ok: false,
+        error: makeError(
+          "VALIDATION_ERROR",
+          "Enter at least 2 characters.",
+          false,
+          { business_name: "Enter at least 2 characters." },
+        ),
+      };
+    }
+
+    if (businessName.length > 120) {
+      return {
+        ok: false,
+        error: makeError(
+          "VALIDATION_ERROR",
+          "Business name is too long.",
+          false,
+          { business_name: "Business name is too long." },
+        ),
+      };
     }
 
     validatePassword(params.password);
 
-    const { data, error } = await withTimeout(
-      supabase.functions.invoke("request_registration_otp", {
-        body: {
-          phone,
-          full_name: fullName,
-          role: params.role,
-          password: params.password,
-        },
-      }),
-    );
-
-    if (error) {
-      throw new Error(error.message || "Failed to send verification code.");
-    }
-
-    const invokeError = extractInvokeError(
-      data,
+    const result = await invokeFunction(
+      "request_registration_otp",
+      {
+        phone,
+        full_name: fullName,
+        role: params.role,
+        password: params.password,
+        business_name: businessName || undefined,
+      },
       "Failed to send verification code.",
     );
-    if (invokeError) {
-      throw new Error(invokeError);
-    }
 
-    return { success: true };
+    if (!result.ok) return result;
+
+    return { ok: true, data: { success: true } };
   } catch (err) {
-    throw classifyAuthError(err, "Failed to send verification code.");
+    return {
+      ok: false,
+      error: normalizeUnknownError(err, "Failed to send verification code."),
+    };
   }
 }
 
@@ -240,53 +559,69 @@ export async function verifyRegistrationOtp(params: {
   phone: string;
   otp: string;
   password: string;
-}) {
+}): Promise<AppResult<{ userId: string }>> {
   try {
     const phone = normalizeUgPhone(params.phone);
 
     if (!/^\d{6}$/.test(params.otp)) {
-      throw new Error("Invalid verification code.");
+      return {
+        ok: false,
+        error: makeError(
+          "VALIDATION_ERROR",
+          "Invalid verification code.",
+          false,
+          { otp: "Invalid verification code." },
+        ),
+      };
     }
 
-    const { data, error } = await withTimeout(
-      supabase.functions.invoke("verify_registration_otp", {
-        body: {
-          phone,
-          otp: params.otp,
-        },
-      }),
+    const verifyResult = await invokeFunction(
+      "verify_registration_otp",
+      { phone, otp: params.otp },
+      "Verification failed.",
     );
 
-    if (error) {
-      throw new Error(error.message || "Verification failed.");
-    }
-
-    const invokeError = extractInvokeError(data, "Verification failed.");
-    if (invokeError) {
-      throw new Error(invokeError);
-    }
+    if (!verifyResult.ok) return verifyResult;
 
     const syntheticEmail = createSyntheticEmail(phone);
 
     const { data: loginData, error: loginError } =
-      await supabase.auth.signInWithPassword({
-        email: syntheticEmail,
-        password: params.password,
-      });
+      await withTimeout(
+        supabase.auth.signInWithPassword({
+          email: syntheticEmail,
+          password: params.password,
+        }),
+      );
 
     if (loginError) {
-      throw new Error(loginError.message || "Unable to sign in.");
+      return {
+        ok: false,
+        error: normalizeUnknownError(loginError, "Unable to sign in."),
+      };
     }
 
-    if (!loginData?.session) {
-      throw new Error("No session returned after verification.");
+    if (!loginData?.user || !loginData.session) {
+      return {
+        ok: false,
+        error: makeError(
+          "UNKNOWN_ERROR",
+          "Unable to sign in.",
+          false,
+        ),
+      };
     }
 
     await syncSessionSafely();
 
-    return loginData.user;
+    return {
+      ok: true,
+      data: { userId: loginData.user.id },
+    };
   } catch (err) {
-    throw classifyAuthError(err, "Verification failed.");
+    return {
+      ok: false,
+      error: normalizeUnknownError(err, "Verification failed."),
+    };
   }
 }
 
@@ -294,28 +629,25 @@ export async function verifyRegistrationOtp(params: {
    RESEND OTP
 ===================================================== */
 
-export async function resendRegistrationOtp(params: { phone: string }) {
+export async function resendRegistrationOtp(params: {
+  phone: string;
+}): Promise<AppResult<{ success: true }>> {
   try {
     const phone = normalizeUgPhone(params.phone);
 
-    const { data, error } = await withTimeout(
-      supabase.functions.invoke("resend_registration_otp", {
-        body: { phone },
-      }),
+    const result = await invokeFunction(
+      "resend_registration_otp",
+      { phone },
+      "Unable to resend code.",
     );
 
-    if (error) {
-      throw new Error(error.message || "Unable to resend code.");
-    }
-
-    const invokeError = extractInvokeError(data, "Unable to resend code.");
-    if (invokeError) {
-      throw new Error(invokeError);
-    }
-
-    return { success: true };
+    if (!result.ok) return result;
+    return { ok: true, data: { success: true } };
   } catch (err) {
-    throw classifyAuthError(err, "Unable to resend code.");
+    return {
+      ok: false,
+      error: normalizeUnknownError(err, "Unable to resend code."),
+    };
   }
 }
 
@@ -323,7 +655,10 @@ export async function resendRegistrationOtp(params: { phone: string }) {
    LOGIN (SYNTHETIC EMAIL AUTH)
 ===================================================== */
 
-export async function login(params: { phone: string; password: string }) {
+export async function login(params: {
+  phone: string;
+  password: string;
+}): Promise<AppResult<{ userId: string }>> {
   try {
     const phone = normalizeUgPhone(params.phone);
     const syntheticEmail = createSyntheticEmail(phone);
@@ -336,18 +671,84 @@ export async function login(params: { phone: string; password: string }) {
     );
 
     if (error) {
-      throw new Error(error.message || "Unable to sign in right now.");
+      return {
+        ok: false,
+        error: normalizeUnknownError(error, "Unable to sign in right now."),
+      };
     }
 
     if (!data?.user || !data.session) {
-      throw new Error("No user returned from sign in.");
+      return {
+        ok: false,
+        error: makeError(
+          "UNKNOWN_ERROR",
+          "Unable to sign in right now.",
+          false,
+        ),
+      };
     }
 
     await syncSessionSafely();
 
-    return data;
+    return {
+      ok: true,
+      data: { userId: data.user.id },
+    };
   } catch (err) {
-    throw classifyAuthError(err, "Unable to sign in right now.");
+    return {
+      ok: false,
+      error: normalizeUnknownError(err, "Unable to sign in right now."),
+    };
+  }
+}
+
+/* =====================================================
+   RE-AUTH FOR SENSITIVE ACTIONS
+===================================================== */
+
+export async function reauthenticateForSensitiveAction(params: {
+  phone: string;
+  password: string;
+}): Promise<AppResult<{ success: true }>> {
+  try {
+    const phone = normalizeUgPhone(params.phone);
+    validatePassword(params.password);
+
+    const syntheticEmail = createSyntheticEmail(phone);
+
+    const { data, error } = await withTimeout(
+      supabase.auth.signInWithPassword({
+        email: syntheticEmail,
+        password: params.password,
+      }),
+    );
+
+    if (error) {
+      return {
+        ok: false,
+        error: normalizeUnknownError(error, "Re-authentication failed."),
+      };
+    }
+
+    if (!data?.session) {
+      return {
+        ok: false,
+        error: makeError(
+          "UNKNOWN_ERROR",
+          "Re-authentication failed.",
+          false,
+        ),
+      };
+    }
+
+    await syncSessionSafely();
+
+    return { ok: true, data: { success: true } };
+  } catch (err) {
+    return {
+      ok: false,
+      error: normalizeUnknownError(err, "Re-authentication failed."),
+    };
   }
 }
 
@@ -355,28 +756,25 @@ export async function login(params: { phone: string; password: string }) {
    PASSWORD RESET REQUEST
 ===================================================== */
 
-export async function requestPasswordReset(params: { phone: string }) {
+export async function requestPasswordReset(params: {
+  phone: string;
+}): Promise<AppResult<{ success: true }>> {
   try {
     const phone = normalizeUgPhone(params.phone);
 
-    const { data, error } = await withTimeout(
-      supabase.functions.invoke("request_password_reset", {
-        body: { phone },
-      }),
+    const result = await invokeFunction(
+      "request_password_reset",
+      { phone },
+      "Unable to process request.",
     );
 
-    if (error) {
-      throw new Error(error.message || "Unable to process request.");
-    }
-
-    const invokeError = extractInvokeError(data, "Unable to process request.");
-    if (invokeError) {
-      throw new Error(invokeError);
-    }
-
-    return { success: true };
+    if (!result.ok) return result;
+    return { ok: true, data: { success: true } };
   } catch (err) {
-    throw classifyAuthError(err, "Unable to process request.");
+    return {
+      ok: false,
+      error: normalizeUnknownError(err, "Unable to process request."),
+    };
   }
 }
 
@@ -388,38 +786,41 @@ export async function confirmPasswordReset(params: {
   phone: string;
   token: string;
   newPassword: string;
-}) {
+}): Promise<AppResult<{ success: true }>> {
   try {
     const phone = normalizeUgPhone(params.phone);
 
     if (!/^\d{6}$/.test(params.token)) {
-      throw new Error("Invalid verification code.");
+      return {
+        ok: false,
+        error: makeError(
+          "VALIDATION_ERROR",
+          "Invalid verification code.",
+          false,
+          { token: "Invalid verification code." },
+        ),
+      };
     }
 
     validatePassword(params.newPassword);
 
-    const { data, error } = await withTimeout(
-      supabase.functions.invoke("confirm_password_reset", {
-        body: {
-          phone,
-          token: params.token,
-          new_password: params.newPassword,
-        },
-      }),
+    const result = await invokeFunction(
+      "confirm_password_reset",
+      {
+        phone,
+        token: params.token,
+        new_password: params.newPassword,
+      },
+      "Reset failed.",
     );
 
-    if (error) {
-      throw new Error(error.message || "Reset failed.");
-    }
-
-    const invokeError = extractInvokeError(data, "Reset failed.");
-    if (invokeError) {
-      throw new Error(invokeError);
-    }
-
-    return { success: true };
+    if (!result.ok) return result;
+    return { ok: true, data: { success: true } };
   } catch (err) {
-    throw classifyAuthError(err, "Reset failed.");
+    return {
+      ok: false,
+      error: normalizeUnknownError(err, "Reset failed."),
+    };
   }
 }
 
@@ -427,44 +828,114 @@ export async function confirmPasswordReset(params: {
    LOGOUT
 ===================================================== */
 
-export async function logout() {
-  try {
-    const { error } = await withTimeout(supabase.auth.signOut());
-
-    if (error) {
-      throw new Error(error.message || "Unable to logout.");
-    }
-
-    await syncSessionSafely();
-  } catch (err) {
-    throw classifyAuthError(err, "Unable to logout.");
-  }
+export async function logout(): Promise<AppResult<{ success: true }>> {
+  const result = await checkedSignOut("Unable to logout.");
+  if (!result.ok) return result;
+  return { ok: true, data: { success: true } };
 }
 
 /* =====================================================
-   DELETE ACCOUNT
+   ACCOUNT ACTIONS
 ===================================================== */
 
-export async function deleteAccount() {
-  try {
-    const { data, error } = await withTimeout(
-      supabase.functions.invoke("delete_account", {
-        method: "POST",
-      }),
-    );
+async function invokeDeleteAccount(): Promise<AppResult<DeleteAccountResult>> {
+  const result = await invokeFunction<FunctionErrorPayload>(
+    "delete_account",
+    undefined,
+    "Unable to complete account action.",
+  );
 
-    if (error) {
-      throw new Error(error.message || "Unable to delete account.");
-    }
+  if (!result.ok) return result;
 
-    const invokeError = extractInvokeError(data, "Unable to delete account.");
-    if (invokeError) {
-      throw new Error(invokeError);
-    }
+  const data = asObject(result.data);
+  const action =
+    data?.action === "deleted" || data?.action === "closed"
+      ? (data.action as DeleteAccountAction)
+      : null;
 
-    await supabase.auth.signOut();
-    await syncSessionSafely();
-  } catch (err) {
-    throw classifyAuthError(err, "Unable to delete account.");
+  if (!action) {
+    return {
+      ok: false,
+      error: makeError(
+        "UNKNOWN_ERROR",
+        "Invalid account action response.",
+        false,
+      ),
+    };
   }
+
+  return {
+    ok: true,
+    data: {
+      success: true,
+      action,
+    },
+  };
+}
+
+export async function deleteJobSeekerAccount(): Promise<
+  AppResult<DeleteAccountResult>
+> {
+  const result = await invokeDeleteAccount();
+  if (!result.ok) return result;
+
+  if (result.data.action !== "deleted") {
+    return {
+      ok: false,
+      error: makeError(
+        "UNKNOWN_ERROR",
+        "Unable to delete account.",
+        false,
+      ),
+    };
+  }
+
+  const signOutResult = await checkedSignOut("Unable to logout.");
+  if (!signOutResult.ok) return signOutResult;
+
+  return result;
+}
+
+export async function closeEmployerAccount(): Promise<
+  AppResult<DeleteAccountResult>
+> {
+  const result = await invokeDeleteAccount();
+  if (!result.ok) return result;
+
+  if (result.data.action !== "closed") {
+    return {
+      ok: false,
+      error: makeError(
+        "UNKNOWN_ERROR",
+        "Unable to close account.",
+        false,
+      ),
+    };
+  }
+
+  const signOutResult = await checkedSignOut("Unable to logout.");
+  if (!signOutResult.ok) return signOutResult;
+
+  return result;
+}
+
+export async function deleteOrCloseAccountByRole(
+  role: UserRole,
+): Promise<AppResult<DeleteAccountResult>> {
+  if (role === "job_seeker") {
+    return deleteJobSeekerAccount();
+  }
+
+  if (role === "employer") {
+    return closeEmployerAccount();
+  }
+
+  return {
+    ok: false,
+    error: makeError(
+      "FORBIDDEN",
+      "This account cannot be deleted from the app.",
+      false,
+    ),
+  };
 }

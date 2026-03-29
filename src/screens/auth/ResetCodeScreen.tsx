@@ -398,7 +398,7 @@ export default function ResetCodeScreen() {
     }
 
     try {
-      await confirmPasswordReset({
+      const result = await confirmPasswordReset({
         phone,
         token: code,
         newPassword: password,
@@ -406,17 +406,18 @@ export default function ResetCodeScreen() {
 
       if (!isMountedRef.current) return;
 
+      if (!result.ok) {
+        triggerShake();
+        setSubmitError(result.error.message);
+        return;
+      }
+
       setSuccess(true);
 
       redirectTimeoutRef.current = setTimeout(() => {
         if (!isMountedRef.current) return;
         navigation.popToTop();
       }, 1200);
-    } catch (err) {
-      if (!isMountedRef.current) return;
-
-      triggerShake();
-      setSubmitError(err instanceof Error ? err.message : "Reset failed.");
     } finally {
       if (isMountedRef.current) {
         setLoading(false);

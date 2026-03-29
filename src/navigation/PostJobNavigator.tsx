@@ -7,13 +7,20 @@ import JobPreviewScreen from "../screens/post/JobPreviewScreen";
 import PaymentScreen from "../screens/payment/PaymentScreen";
 import PaymentPendingScreen from "../screens/payment/PaymentPendingScreen";
 import SponsorPaymentScreen from "../screens/payment/SponsorPaymentScreen";
+import PostingSuccessScreen from "../screens/post/PostingSuccessScreen";
+import type { Job } from "../jobs/jobs.types";
 
-/* =====================================================
-   STACK PARAM TYPES
-===================================================== */
+export type PostJobMode = "create" | "edit" | "renew";
+export type PaymentMode = "create" | "renew";
 
 export type PostJobStackParamList = {
-  PostJob: undefined;
+  PostJob:
+    | {
+        job?: Job;
+        jobId?: string;
+        mode?: PostJobMode;
+      }
+    | undefined;
 
   Preview: {
     draftId: string;
@@ -22,7 +29,7 @@ export type PostJobStackParamList = {
 
   Payment: {
     draftId: string;
-    mode?: "create" | "renew";
+    mode?: PaymentMode;
     jobId?: string;
   };
 
@@ -31,17 +38,15 @@ export type PostJobStackParamList = {
   };
 
   PaymentPending: {
-    jobId: string;
+    intentId: string;
+    jobId?: string;
     flow?: "job_post" | "sponsor_upgrade";
-    intentId?: string | null;
   };
+
+  PostingSuccess: undefined;
 };
 
 const Stack = createNativeStackNavigator<PostJobStackParamList>();
-
-/* =====================================================
-   NAVIGATOR
-===================================================== */
 
 export function PostJobNavigator() {
   return (
@@ -89,6 +94,15 @@ export function PostJobNavigator() {
         component={PaymentPendingScreen}
         options={{
           animation: "fade",
+          gestureEnabled: false,
+        }}
+      />
+
+      <Stack.Screen
+        name="PostingSuccess"
+        component={PostingSuccessScreen}
+        options={{
+          animation: "fade_from_bottom",
           gestureEnabled: false,
         }}
       />

@@ -17,7 +17,12 @@ import {
   type ViewStyle,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { useNavigation, useRoute } from "@react-navigation/native";
+import {
+  useNavigation,
+  useRoute,
+  type RouteProp,
+} from "@react-navigation/native";
+import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 
 import { requestRegistrationOtp } from "../../auth/auth.service";
 import { useTheme } from "../../theme/useTheme";
@@ -27,12 +32,33 @@ import { AppInput } from "../../ui/AppInput";
 import { AppButton } from "../../ui/AppButton";
 import { InlineAlert } from "../../ui/InlineAlert";
 import { AppEntrance } from "../../ui/AppEntrance";
+import type {
+  AuthIntent,
+  AuthRole,
+  AuthStackParamList,
+} from "../../navigation/AuthNavigator";
 
-type Role = "employer" | "job_seeker";
+type Role = AuthRole;
+
+type RegisterScreenNavigationProp = NativeStackNavigationProp<
+  AuthStackParamList,
+  "Register"
+>;
+type RegisterScreenRouteProp = RouteProp<AuthStackParamList, "Register">;
 
 function validateFullName(value: string): string | null {
   if (!value.trim()) return "Full name is required.";
   if (value.trim().length < 2) return "Enter at least 2 characters.";
+  return null;
+}
+
+function validateBusinessName(value: string): string | null {
+  const trimmed = value.trim();
+
+  if (!trimmed) return null;
+  if (trimmed.length < 2) return "Enter at least 2 characters.";
+  if (trimmed.length > 120) return "Business name is too long.";
+
   return null;
 }
 
@@ -74,11 +100,12 @@ function validateConfirmPassword(
 }
 
 export default function RegisterScreen() {
-  const navigation = useNavigation<any>();
-  const route = useRoute<any>();
+  const navigation = useNavigation<RegisterScreenNavigationProp>();
+  const route = useRoute<RegisterScreenRouteProp>();
   const { theme } = useTheme();
 
   const fullNameRef = useRef<TextInput | null>(null);
+  const businessNameRef = useRef<TextInput | null>(null);
   const phoneRef = useRef<TextInput | null>(null);
   const passwordRef = useRef<TextInput | null>(null);
   const confirmPasswordRef = useRef<TextInput | null>(null);
@@ -91,8 +118,7 @@ export default function RegisterScreen() {
         ? "employer"
         : null;
 
-  const premiumIntent = route.params?.intent === "premium_upgrade";
-  const postJobIntent = route.params?.intent === "post_job";
+  const intent: AuthIntent | undefined = route.params?.intent;
 
   const defaultRole: Role = forcedRole
     ? forcedRole
@@ -101,6 +127,7 @@ export default function RegisterScreen() {
       : "job_seeker";
 
   const [fullName, setFullName] = useState("");
+  const [businessName, setBusinessName] = useState("");
   const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -111,6 +138,7 @@ export default function RegisterScreen() {
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   const [fullNameTouched, setFullNameTouched] = useState(false);
+  const [businessNameTouched, setBusinessNameTouched] = useState(false);
   const [phoneTouched, setPhoneTouched] = useState(false);
   const [passwordTouched, setPasswordTouched] = useState(false);
   const [confirmPasswordTouched, setConfirmPasswordTouched] = useState(false);
@@ -125,10 +153,22 @@ export default function RegisterScreen() {
   const roleLocked = Boolean(forcedRole);
   const resolvedRole: Role = forcedRole ?? role;
 
+  useEffect(() => {
+    if (resolvedRole !== "employer" && businessName) {
+      setBusinessName("");
+      setBusinessNameTouched(false);
+    }
+  }, [resolvedRole, businessName]);
+
   const fullNameError = useMemo(() => {
     if (!fullNameTouched) return null;
     return validateFullName(fullName);
   }, [fullName, fullNameTouched]);
+
+  const businessNameError = useMemo(() => {
+    if (resolvedRole !== "employer" || !businessNameTouched) return null;
+    return validateBusinessName(businessName);
+  }, [businessName, businessNameTouched, resolvedRole]);
 
   const phoneError = useMemo(() => {
     if (!phoneTouched) return null;
@@ -148,12 +188,21 @@ export default function RegisterScreen() {
   const canSubmit = useMemo(() => {
     return (
       !validateFullName(fullName) &&
+      !(resolvedRole === "employer" && validateBusinessName(businessName)) &&
       !validateUgandaPhone(phone) &&
       !validatePassword(password) &&
       !validateConfirmPassword(password, confirmPassword) &&
       !loading
     );
-  }, [fullName, phone, password, confirmPassword, loading]);
+  }, [
+    fullName,
+    businessName,
+    resolvedRole,
+    phone,
+    password,
+    confirmPassword,
+    loading,
+  ]);
 
   const lockedRoleMessage =
     forcedRole === "job_seeker"
@@ -355,6 +404,11 @@ export default function RegisterScreen() {
     setSubmitError(null);
   }, []);
 
+  const handleBusinessNameChange = useCallback((value: string) => {
+    setBusinessName(value);
+    setSubmitError(null);
+  }, []);
+
   const handlePhoneChange = useCallback((value: string) => {
     setPhone(value);
     setSubmitError(null);
@@ -372,6 +426,8 @@ export default function RegisterScreen() {
 
   const handleRegister = useCallback(async () => {
     const nextFullNameError = validateFullName(fullName);
+    const nextBusinessNameError =
+      resolvedRole === "employer" ? validateBusinessName(businessName) : null;
     const nextPhoneError = validateUgandaPhone(phone);
     const nextPasswordError = validatePassword(password);
     const nextConfirmPasswordError = validateConfirmPassword(
@@ -380,6 +436,7 @@ export default function RegisterScreen() {
     );
 
     setFullNameTouched(true);
+    setBusinessNameTouched(true);
     setPhoneTouched(true);
     setPasswordTouched(true);
     setConfirmPasswordTouched(true);
@@ -387,6 +444,7 @@ export default function RegisterScreen() {
 
     if (
       nextFullNameError ||
+      nextBusinessNameError ||
       nextPhoneError ||
       nextPasswordError ||
       nextConfirmPasswordError ||
@@ -402,33 +460,30 @@ export default function RegisterScreen() {
     }
 
     try {
-      await requestRegistrationOtp({
+      const result = await requestRegistrationOtp({
         phone: phone.trim(),
         full_name: fullName.trim(),
         role: resolvedRole,
         password,
+        business_name:
+          resolvedRole === "employer" && businessName.trim()
+            ? businessName.trim()
+            : undefined,
       });
 
       if (!isMountedRef.current) return;
+
+      if (!result.ok) {
+        setSubmitError(result.error.message);
+        return;
+      }
 
       navigation.navigate("VerifyOtp", {
         phone: phone.trim(),
         password,
         role: resolvedRole,
-        intent: premiumIntent
-          ? "premium_upgrade"
-          : postJobIntent
-            ? "post_job"
-            : undefined,
+        intent,
       });
-    } catch (err) {
-      if (!isMountedRef.current) return;
-
-      setSubmitError(
-        err instanceof Error
-          ? err.message
-          : "Unable to send verification code.",
-      );
     } finally {
       if (isMountedRef.current) {
         setLoading(false);
@@ -436,13 +491,13 @@ export default function RegisterScreen() {
     }
   }, [
     fullName,
+    businessName,
     phone,
     password,
     confirmPassword,
     loading,
     resolvedRole,
-    premiumIntent,
-    postJobIntent,
+    intent,
     navigation,
   ]);
 
@@ -461,9 +516,13 @@ export default function RegisterScreen() {
 
     return (
       <Pressable
-        onPress={() => setRole(value)}
+        onPress={() => {
+          if (roleLocked) return;
+          setRole(value);
+        }}
         accessibilityRole="button"
-        accessibilityState={{ selected }}
+        accessibilityState={{ selected, disabled: roleLocked }}
+        disabled={roleLocked}
         style={({ pressed }) => [
           {
             flex: 1,
@@ -596,7 +655,13 @@ export default function RegisterScreen() {
                   autoCapitalize="words"
                   autoCorrect={false}
                   returnKeyType="next"
-                  onSubmitEditing={() => phoneRef.current?.focus()}
+                  onSubmitEditing={() => {
+                    if (resolvedRole === "employer") {
+                      businessNameRef.current?.focus();
+                      return;
+                    }
+                    phoneRef.current?.focus();
+                  }}
                   leftSlot={
                     <Ionicons
                       name="person-outline"
@@ -607,6 +672,32 @@ export default function RegisterScreen() {
                   error={fullNameError ?? undefined}
                 />
               </View>
+
+              {resolvedRole === "employer" ? (
+                <View style={fieldGroupStyle}>
+                  <AppInput
+                    ref={businessNameRef}
+                    label="Business name"
+                    value={businessName}
+                    onChangeText={handleBusinessNameChange}
+                    onBlur={() => setBusinessNameTouched(true)}
+                    placeholder="Optional business name"
+                    autoCapitalize="words"
+                    autoCorrect={false}
+                    returnKeyType="next"
+                    onSubmitEditing={() => phoneRef.current?.focus()}
+                    leftSlot={
+                      <Ionicons
+                        name="briefcase-outline"
+                        size={18}
+                        color={theme.colors.textSecondary}
+                      />
+                    }
+                    hint="Optional"
+                    error={businessNameError ?? undefined}
+                  />
+                </View>
+              ) : null}
 
               <View style={fieldGroupStyle}>
                 <AppInput
@@ -768,7 +859,13 @@ export default function RegisterScreen() {
 
           <View style={footerStyle}>
             <Pressable
-              onPress={() => navigation.navigate("Login")}
+              onPress={() =>
+                navigation.navigate("Login", {
+                  forcedRole: route.params?.forcedRole,
+                  role: route.params?.role,
+                  intent,
+                })
+              }
               style={({ pressed }) => [pressed ? { opacity: 0.72 } : null]}
             >
               <View style={inlineRowStyle}>

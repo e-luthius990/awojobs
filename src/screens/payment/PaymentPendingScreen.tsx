@@ -40,6 +40,7 @@ export default function PaymentPendingScreen({ route, navigation }: any) {
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const activeRef = useRef(true);
   const navigatingRef = useRef(false);
+  const pollingRef = useRef(false);
 
   const stopPolling = useCallback(() => {
     if (intervalRef.current) {
@@ -48,20 +49,32 @@ export default function PaymentPendingScreen({ route, navigation }: any) {
     }
   }, []);
 
+  const setSafeStatus = useCallback((next: PaymentState) => {
+    if (!activeRef.current) return;
+    setStatus(next);
+  }, []);
+
+  const setSafeError = useCallback((message: string | null) => {
+    if (!activeRef.current) return;
+    setError(message);
+  }, []);
+
   const exitToSafeScreen = useCallback(() => {
     if (navigatingRef.current) return;
     navigatingRef.current = true;
+    stopPolling();
     navigation.popToTop();
-  }, [navigation]);
+  }, [navigation, stopPolling]);
 
   const handleConfirmed = useCallback(() => {
     if (navigatingRef.current) return;
 
     stopPolling();
-    setStatus("paid");
+    setSafeError(null);
+    setSafeStatus("paid");
 
     setTimeout(() => {
-      if (navigatingRef.current) return;
+      if (!activeRef.current || navigatingRef.current) return;
       navigatingRef.current = true;
 
       if (flow === "sponsor_upgrade") {
@@ -69,28 +82,40 @@ export default function PaymentPendingScreen({ route, navigation }: any) {
           index: 0,
           routes: [{ name: "EmployerTabs" }],
         });
-      } else {
-        navigation.replace("PostingSuccess");
+        return;
       }
+
+      if (jobId) {
+        navigation.replace("PostingSuccess", { jobId });
+        return;
+      }
+
+      navigation.popToTop();
     }, 600);
-  }, [flow, navigation, stopPolling]);
+  }, [flow, jobId, navigation, setSafeError, setSafeStatus, stopPolling]);
 
   const poll = useCallback(
     async (manual = false) => {
       if (!activeRef.current || !intentId || navigatingRef.current) return;
+      if (pollingRef.current) return;
 
-      if (manual) setCheckingNow(true);
+      pollingRef.current = true;
+
+      if (manual && activeRef.current) {
+        setCheckingNow(true);
+      }
 
       try {
-        const { data, error } = await supabase.functions.invoke(
+        const { data, error: invokeError } = await supabase.functions.invoke(
           "check_payment_status",
           { body: { intent_id: intentId } },
         );
 
         if (!activeRef.current || navigatingRef.current) return;
-        if (error) throw error;
+        if (invokeError) throw invokeError;
 
         const payload = (data ?? {}) as CheckPaymentResponse;
+
         if (payload.error) {
           throw new Error(payload.error);
         }
@@ -104,46 +129,53 @@ export default function PaymentPendingScreen({ route, navigation }: any) {
 
         if (serverStatus === "failed") {
           stopPolling();
-          setStatus("failed");
-          setError("Payment failed. Please try again.");
+          setSafeStatus("failed");
+          setSafeError("Payment failed. Please try again.");
           return;
         }
 
         if (serverStatus === "expired") {
           stopPolling();
-          setStatus("expired");
-          setError("This payment session has expired.");
+          setSafeStatus("expired");
+          setSafeError("This payment session has expired.");
           return;
         }
 
         if (serverStatus === "unknown") {
           stopPolling();
-          setStatus("failed");
-          setError("Payment session was not found.");
+          setSafeStatus("failed");
+          setSafeError("Payment session was not found.");
           return;
         }
 
         if (Date.now() - startTimeRef.current > MAX_WAIT_MS) {
           stopPolling();
-          setError(
+          setSafeStatus("failed");
+          setSafeError(
             "Payment is taking longer than expected. You can check again later from My Jobs.",
           );
         }
-      } catch {
+      } catch (e: any) {
         if (!activeRef.current || navigatingRef.current) return;
 
         if (manual) {
-          setError("Unable to check payment status right now.");
+          setSafeError(
+            e?.message ?? "Unable to check payment status right now.",
+          );
         }
       } finally {
-        if (manual) setCheckingNow(false);
+        pollingRef.current = false;
+
+        if (manual && activeRef.current) {
+          setCheckingNow(false);
+        }
       }
     },
-    [handleConfirmed, intentId, stopPolling],
+    [handleConfirmed, intentId, setSafeError, setSafeStatus, stopPolling],
   );
 
   useEffect(() => {
-    if (!intentId || !jobId) {
+    if (!intentId) {
       setStatus("failed");
       setError("Missing payment reference.");
       return;
@@ -151,9 +183,11 @@ export default function PaymentPendingScreen({ route, navigation }: any) {
 
     activeRef.current = true;
     navigatingRef.current = false;
+    pollingRef.current = false;
     startTimeRef.current = Date.now();
 
     void poll();
+
     intervalRef.current = setInterval(() => {
       void poll();
     }, POLL_INTERVAL_MS);
@@ -162,11 +196,11 @@ export default function PaymentPendingScreen({ route, navigation }: any) {
       activeRef.current = false;
       stopPolling();
     };
-  }, [intentId, jobId, poll, stopPolling]);
+  }, [intentId, poll, stopPolling]);
 
   useEffect(() => {
-    const sub = AppState.addEventListener("change", (state) => {
-      if (state === "active") {
+    const sub = AppState.addEventListener("change", (nextState) => {
+      if (nextState === "active") {
         void poll();
       }
     });
@@ -332,6 +366,13 @@ export default function PaymentPendingScreen({ route, navigation }: any) {
                   message={pendingMessage}
                 />
               </>
+            ) : null}
+
+            {jobId ? null : status === "pending" ? (
+              <InlineAlert
+                tone="info"
+                message="Payment is being tracked by payment intent."
+              />
             ) : null}
 
             {error ? <InlineAlert tone="error" message={error} /> : null}

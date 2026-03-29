@@ -8,10 +8,15 @@ import React, {
 } from "react";
 import { View, RefreshControl, Pressable } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { supabase } from "../../core/supabase";
 import { logout as logoutUser } from "../../auth/auth.service";
 import CountUp from "../../ui/admin/CountUp";
 import Sparkline from "../../ui/admin/Sparkline";
+
+import {
+  getAdminDashboardSummary,
+  type AdminDashboardPeriod,
+  type AdminSummary,
+} from "../../services/admin.dashboard.service";
 
 import { useTheme } from "../../theme/useTheme";
 import { AppScreen } from "../../ui/AppScreen";
@@ -20,23 +25,6 @@ import { AppCard } from "../../ui/AppCard";
 import { InlineAlert } from "../../ui/InlineAlert";
 import { SkeletonCard } from "../../ui/Skeleton";
 
-type RevenuePoint = {
-  day: string;
-  revenue: number;
-};
-
-type AdminSummary = {
-  total_users: number;
-  active_jobs: number;
-  flagged_jobs: number;
-  confirmed_revenue_ugx: number;
-  pending_payments: number;
-  active_premium_users: number;
-  today_revenue: number;
-  period_revenue: number;
-  daily_revenue: RevenuePoint[];
-};
-
 export default function AdminDashboard() {
   const { theme } = useTheme();
 
@@ -44,47 +32,48 @@ export default function AdminDashboard() {
   const [adminName, setAdminName] = useState("Admin");
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [period, setPeriod] = useState<"weekly" | "monthly">("weekly");
+  const [period, setPeriod] = useState<AdminDashboardPeriod>("weekly");
   const [error, setError] = useState<string | null>(null);
 
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const requestIdRef = useRef(0);
 
   const load = useCallback(
     async (silent = false) => {
-      if (!silent) setLoading(true);
+      const requestId = ++requestIdRef.current;
+
+      if (!silent) {
+        setLoading(true);
+      }
+
       setError(null);
 
       try {
-        const { data: sessionData } = await supabase.auth.getSession();
-        const userId = sessionData.session?.user?.id;
+        const result = await getAdminDashboardSummary(period);
 
-        if (userId) {
-          const { data: profile } = await supabase
-            .from("profiles")
-            .select("full_name")
-            .eq("id", userId)
-            .single();
+        if (requestId !== requestIdRef.current) {
+          return;
+        }
 
-          if (profile?.full_name) {
-            setAdminName(profile.full_name);
+        if (!result.ok) {
+          setError(result.error.message);
+
+          if (!silent) {
+            setData(null);
           }
+
+          return;
         }
 
-        const { data, error } = await supabase.rpc(
-          "super_admin_dashboard_summary",
-          { p_period: period },
-        );
-
-        if (error) throw error;
-        setData(data ?? null);
-      } catch {
-        setError("Could not load admin dashboard.");
-        if (!silent) {
-          setData(null);
-        }
+        setAdminName(result.data.adminName);
+        setData(result.data.summary);
       } finally {
-        if (!silent) setLoading(false);
-        setRefreshing(false);
+        if (requestId === requestIdRef.current) {
+          if (!silent) {
+            setLoading(false);
+          }
+          setRefreshing(false);
+        }
       }
     },
     [period],

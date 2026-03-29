@@ -16,8 +16,6 @@ serve(async (req) => {
   }
 
   try {
-    /* ================= AUTH (ANON CLIENT) ================= */
-
     const authHeader = req.headers.get("Authorization");
     if (!authHeader?.startsWith("Bearer ")) {
       return json({ error: "Unauthorized" }, 401);
@@ -27,43 +25,52 @@ serve(async (req) => {
 
     const anon = createClient(
       Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_ANON_KEY")!
+      Deno.env.get("SUPABASE_ANON_KEY")!,
+      { auth: { persistSession: false } },
     );
 
-    const { data: authRes } = await anon.auth.getUser(token);
-    const user = authRes?.user;
+    const {
+      data: authRes,
+      error: authError,
+    } = await anon.auth.getUser(token);
 
-    if (!user) {
+    if (authError || !authRes?.user) {
       return json({ error: "Unauthorized" }, 401);
     }
 
-    /* ================= SERVICE CLIENT ================= */
+    const user = authRes.user;
 
     const service = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
-      { auth: { persistSession: false } }
+      { auth: { persistSession: false } },
     );
-
-    /* ================= RATE LIMIT ================= */
 
     const oneMinuteAgo = new Date(Date.now() - 60_000).toISOString();
 
-    const { count } = await service
+    const { count, error: rateCountError } = await service
       .from("payment_intents_log")
       .select("id", { count: "exact", head: true })
       .eq("user_id", user.id)
       .gte("created_at", oneMinuteAgo);
 
+    if (rateCountError) {
+      console.error("[create_job_intent rate-count]", rateCountError);
+      return json({ error: "Could not process request" }, 500);
+    }
+
     if ((count ?? 0) >= USER_LIMIT_PER_MIN) {
       return json({ error: "Too many requests" }, 429);
     }
 
-    await service.from("payment_intents_log").insert({
-      user_id: user.id,
-    });
+    const { error: rateInsertError } = await service
+      .from("payment_intents_log")
+      .insert({ user_id: user.id });
 
-    /* ================= PAYLOAD ================= */
+    if (rateInsertError) {
+      console.error("[create_job_intent rate-log]", rateInsertError);
+      return json({ error: "Could not process request" }, 500);
+    }
 
     const body = await req.json().catch(() => null);
     if (!body || typeof body !== "object") {
@@ -72,7 +79,12 @@ serve(async (req) => {
 
     const { draft_id, sponsorship, mode, idempotency_key } = body;
 
-    if (!draft_id || !mode || !idempotency_key) {
+    if (
+      typeof draft_id !== "string" ||
+      !draft_id.trim() ||
+      typeof mode !== "string" ||
+      typeof idempotency_key !== "string"
+    ) {
       return json({ error: "Missing required fields" }, 400);
     }
 
@@ -85,17 +97,15 @@ serve(async (req) => {
       "sponsored_day",
       "sponsored_week",
       "sponsored_month",
-    ];
+    ] as const;
 
-    if (!allowedSponsorship.includes(sponsorship ?? null)) {
+    if (!allowedSponsorship.includes((sponsorship ?? null) as never)) {
       return json({ error: "Invalid sponsorship option" }, 400);
     }
 
-    if (typeof idempotency_key !== "string" || idempotency_key.length < 20) {
+    if (idempotency_key.trim().length < 20) {
       return json({ error: "Invalid idempotency key" }, 400);
     }
-
-    /* ================= VERIFY JOB OWNERSHIP ================= */
 
     const { data: job, error: jobError } = await service
       .from("jobs")
@@ -115,34 +125,32 @@ serve(async (req) => {
       return json({ error: "Invalid job state for creation" }, 400);
     }
 
-    if (mode === "renew" && job.status !== "expired") {
+    if (mode === "renew" && job.status !== "pending_payment" && job.status !== "expired") {
       return json({ error: "Only expired jobs can be renewed" }, 400);
     }
 
-    /* ================= RPC ================= */
-
-    const { data, error } = await service.rpc(
-      "create_job_payment_intent",
-      {
-        p_user_id: user.id,
-        p_draft_id: draft_id,
-        p_sponsorship: sponsorship ?? null,
-        p_idempotency_key: idempotency_key,
-        p_mode: mode,
-      }
-    );
+    const { data, error } = await service.rpc("create_job_payment_intent", {
+      p_user_id: user.id,
+      p_draft_id: draft_id,
+      p_sponsorship: sponsorship ?? null,
+      p_idempotency_key: idempotency_key.trim(),
+      p_mode: mode,
+    });
 
     if (error) {
       console.error("[create_job_intent RPC]", error);
-      return json({ error: "Business rule violation" }, 400);
+      return json(
+        { error: error.message || "Business rule violation" },
+        400,
+      );
     }
 
     return json({
-      intent_id: data.intent_id,
-      payment_reference: data.payment_reference,
-      amount: data.amount,
+      intent_id: data?.intent_id ?? null,
+      payment_reference: data?.payment_reference ?? null,
+      amount: data?.amount ?? null,
+      job_id: data?.job_id ?? draft_id,
     });
-
   } catch (err) {
     console.error("[create_job_intent]", err);
     return json({ error: "Server error" }, 500);

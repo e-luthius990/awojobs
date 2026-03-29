@@ -21,19 +21,23 @@ serve(async (req) => {
       return json({ error: "unauthorized" }, 401);
     }
 
-    const token = auth.replace("Bearer ", "").trim();
+    const token = auth.slice("Bearer ".length).trim();
+    if (!token) {
+      return json({ error: "unauthorized" }, 401);
+    }
 
     const anon = createClient(
       Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_ANON_KEY")!
+      Deno.env.get("SUPABASE_ANON_KEY")!,
+      { auth: { persistSession: false } }
     );
 
-    const { data } = await anon.auth.getUser(token);
-    const user = data?.user;
-
-    if (!user) {
+    const { data: authData, error: authError } = await anon.auth.getUser(token);
+    if (authError || !authData?.user) {
       return json({ error: "invalid_session" }, 401);
     }
+
+    const user = authData.user;
 
     const service = createClient(
       Deno.env.get("SUPABASE_URL")!,
@@ -41,32 +45,94 @@ serve(async (req) => {
       { auth: { persistSession: false } }
     );
 
-    /* ---------- CALL CENTRALIZED SQL ---------- */
+    const { data: profile, error: profileError } = await service
+      .from("profiles")
+      .select("id, role")
+      .eq("id", user.id)
+      .maybeSingle();
 
-    const { data: result, error } = await service.rpc(
-      "delete_account",
-      { p_user_id: user.id }
-    );
-
-    if (error) {
-      console.error("[delete_account RPC]", error);
-      return json({ error: "database_error" }, 500);
+    if (profileError) {
+      console.error("[delete_account profile]", profileError);
+      return json({ error: "profile_lookup_failed" }, 500);
     }
 
-    if (!result?.ok) {
-      return json(
-        { error: result?.error ?? "unknown_error" },
-        400
+    if (!profile) {
+      return json({ error: "profile_not_found" }, 404);
+    }
+
+    if (profile.role === "job_seeker") {
+      const { data: result, error: rpcError } = await service.rpc(
+        "delete_job_seeker_account",
+        { p_user_id: user.id }
       );
+
+      if (rpcError) {
+        console.error("[delete_job_seeker_account RPC]", rpcError);
+        return json({ error: "database_error" }, 500);
+      }
+
+      if (!result?.ok) {
+        return json({ error: result?.error ?? "unknown_error" }, 400);
+      }
+
+      const { error: invalidateError } =
+        await service.auth.admin.invalidateUserSessions(user.id);
+
+      if (invalidateError) {
+        console.error("[invalidate sessions]", invalidateError);
+        return json({ error: "invalidate_sessions_failed" }, 500);
+      }
+
+      const { error: deleteUserError } =
+        await service.auth.admin.deleteUser(user.id);
+
+      if (deleteUserError) {
+        console.error("[delete auth user]", deleteUserError);
+        return json({ error: "delete_auth_user_failed" }, 500);
+      }
+
+      return json({ ok: true, action: "deleted" });
     }
 
-    /* ---------- DELETE AUTH USER ---------- */
+    if (profile.role === "employer") {
+      const { data: result, error: rpcError } = await service.rpc(
+        "close_employer_account",
+        { p_user_id: user.id }
+      );
 
-    await service.auth.admin.invalidateUserSessions(user.id);
-    await service.auth.admin.deleteUser(user.id);
+      if (rpcError) {
+        console.error("[close_employer_account RPC]", rpcError);
+        return json({ error: "database_error" }, 500);
+      }
 
-    return json({ ok: true });
+      if (!result?.ok) {
+        return json({ error: result?.error ?? "unknown_error" }, 400);
+      }
 
+      const { error: invalidateError } =
+        await service.auth.admin.invalidateUserSessions(user.id);
+
+      if (invalidateError) {
+        console.error("[invalidate sessions]", invalidateError);
+        return json({ error: "invalidate_sessions_failed" }, 500);
+      }
+
+      const { error: deleteUserError } =
+        await service.auth.admin.deleteUser(user.id);
+
+      if (deleteUserError) {
+        console.error("[delete auth user]", deleteUserError);
+        return json({ error: "delete_auth_user_failed" }, 500);
+      }
+
+      return json({ ok: true, action: "closed" });
+    }
+
+    if (profile.role === "moderator" || profile.role === "super_admin") {
+      return json({ error: "role_not_deletable" }, 403);
+    }
+
+    return json({ error: "unsupported_role" }, 400);
   } catch (err) {
     console.error("[delete_account]", err);
     return json({ error: "internal_error" }, 500);

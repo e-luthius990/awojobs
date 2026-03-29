@@ -8,10 +8,14 @@ import React, {
 import { View, ActivityIndicator, ScrollView, Pressable } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 
-import { supabase } from "../../core/supabase";
-import type { PickerLocation } from "../../ui/admin/LocationPicker";
 import NumberField from "../../ui/admin/NumberField";
 import TextAreaField from "../../ui/admin/TextAreaField";
+
+import {
+  fetchSeedLocationOptions,
+  seedAdminJobs,
+  type PickerLocation,
+} from "../../services/admin.seed-jobs.service";
 
 import { useTheme } from "../../theme/useTheme";
 import { AppText } from "../../ui/AppText";
@@ -19,13 +23,6 @@ import { AppCard } from "../../ui/AppCard";
 import { AppScreen } from "../../ui/AppScreen";
 import { AppButton } from "../../ui/AppButton";
 import { InlineAlert } from "../../ui/InlineAlert";
-
-type DBLocation = {
-  id: string;
-  district: string | null;
-  town: string | null;
-  sub_county: string | null;
-};
 
 const MAX_JOBS_TOTAL = 200;
 
@@ -50,6 +47,7 @@ export default function AdminSeedJobsScreen() {
   const [loading, setLoading] = useState(false);
   const [loadingLocations, setLoadingLocations] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   const contentStyle = useMemo<ViewStyle>(
     () => ({
@@ -139,27 +137,19 @@ export default function AdminSeedJobsScreen() {
   );
 
   const loadLocations = useCallback(async () => {
+    setLoadingLocations(true);
+    setError(null);
+
     try {
-      setLoadingLocations(true);
-      setError(null);
+      const result = await fetchSeedLocationOptions(2000);
 
-      const { data, error } = await supabase
-        .from("locations")
-        .select("id,district,town,sub_county")
-        .order("district", { ascending: true });
+      if (!result.ok) {
+        setLocations([]);
+        setError(result.error.message);
+        return;
+      }
 
-      if (error) throw error;
-
-      const mapped: PickerLocation[] =
-        (data as DBLocation[])?.map((l) => ({
-          id: l.id,
-          name: [l.district, l.town, l.sub_county].filter(Boolean).join(" • "),
-        })) ?? [];
-
-      setLocations(mapped);
-    } catch {
-      setError("Failed to load locations.");
-      setLocations([]);
+      setLocations(result.data);
     } finally {
       setLoadingLocations(false);
     }
@@ -177,15 +167,25 @@ export default function AdminSeedJobsScreen() {
     return jobs * selectedCount;
   }, [jobsPerLocation, selectedCount]);
 
-  const toggleLocation = useCallback(
-    (id: string) => {
-      setSelectedLocations((prev) =>
-        prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
-      );
-      if (error) setError(null);
-    },
-    [error],
-  );
+  const contactPhoneError = useMemo(() => {
+    const value = contactPhone.trim();
+    if (!value) return null;
+
+    const normalized = value.replace(/\s+/g, "");
+    if (!/^(\+256|256|0)\d{9}$/.test(normalized)) {
+      return "Enter a valid Uganda phone number.";
+    }
+
+    return null;
+  }, [contactPhone]);
+
+  const toggleLocation = useCallback((id: string) => {
+    setSelectedLocations((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+    );
+    setError(null);
+    setSuccessMessage(null);
+  }, []);
 
   const handleSeedJobs = useCallback(async () => {
     const titleLines = titles
@@ -202,64 +202,72 @@ export default function AdminSeedJobsScreen() {
     const ratio = Number(sponsoredRatio);
 
     if (titleLines.length === 0) {
+      setSuccessMessage(null);
       setError("At least one title is required.");
       return;
     }
 
     if (descriptionLines.length === 0) {
+      setSuccessMessage(null);
       setError("At least one description is required.");
       return;
     }
 
     if (selectedLocations.length === 0) {
+      setSuccessMessage(null);
       setError("Select at least one location.");
       return;
     }
 
     if (!jobsCount || jobsCount < 1) {
+      setSuccessMessage(null);
       setError("Jobs per location must be at least 1.");
       return;
     }
 
     if (ratio < 0 || ratio > 1) {
+      setSuccessMessage(null);
       setError("Sponsored ratio must be between 0 and 1.");
       return;
     }
 
+    if (contactPhoneError) {
+      setSuccessMessage(null);
+      setError(contactPhoneError);
+      return;
+    }
+
     if (totalToCreate > MAX_JOBS_TOTAL) {
+      setSuccessMessage(null);
       setError(
         `You are trying to create ${totalToCreate} jobs. Maximum allowed is ${MAX_JOBS_TOTAL}.`,
       );
       return;
     }
 
-    try {
-      setLoading(true);
-      setError(null);
+    setLoading(true);
+    setError(null);
+    setSuccessMessage(null);
 
-      const { data, error } = await supabase.rpc("admin_seed_jobs", {
-        p_titles: titleLines,
-        p_descriptions: descriptionLines,
-        p_location_ids: selectedLocations,
-        p_jobs_per_location: jobsCount,
-        p_sponsored_ratio: ratio,
-        p_contact_phone: contactPhone.trim() || null,
-        p_contact_method: "phone",
-        p_pay_type: "not_specified",
+    try {
+      const result = await seedAdminJobs({
+        titles: titleLines,
+        descriptions: descriptionLines,
+        locationIds: selectedLocations,
+        jobsPerLocation: jobsCount,
+        sponsoredRatio: ratio,
+        contactPhone: contactPhone.trim() ? contactPhone.trim() : null,
       });
 
-      if (error) throw error;
+      if (!result.ok) {
+        setError(result.error.message);
+        return;
+      }
 
-      const createdCount = data?.created_count ?? totalToCreate;
-      setError(null);
-
-      // Keep fields as-is for quick reruns, just clear selections
       setSelectedLocations([]);
-
-      // Success feedback inline through non-error alert component
-      setError(`Created ${createdCount} jobs successfully.`);
-    } catch (e: any) {
-      setError(e?.message || "Failed to seed jobs.");
+      setSuccessMessage(
+        `Created ${result.data.createdCount} jobs successfully.`,
+      );
     } finally {
       setLoading(false);
     }
@@ -271,6 +279,7 @@ export default function AdminSeedJobsScreen() {
     selectedLocations,
     totalToCreate,
     contactPhone,
+    contactPhoneError,
   ]);
 
   const ctaLabel = loading
@@ -278,11 +287,6 @@ export default function AdminSeedJobsScreen() {
     : totalToCreate > 0
       ? `Generate ${totalToCreate} Jobs`
       : "Generate Jobs";
-
-  const isSuccessMessage =
-    error !== null &&
-    error.toLowerCase().includes("created") &&
-    error.toLowerCase().includes("successfully");
 
   return (
     <AppScreen scroll contentContainerStyle={contentStyle}>
@@ -306,11 +310,9 @@ export default function AdminSeedJobsScreen() {
         </AppText>
       </View>
 
-      {error ? (
-        <InlineAlert
-          tone={isSuccessMessage ? "success" : "error"}
-          message={error}
-        />
+      {error ? <InlineAlert tone="error" message={error} /> : null}
+      {successMessage ? (
+        <InlineAlert tone="success" message={successMessage} />
       ) : null}
 
       <AppCard variant="elevated" padding="lg">
@@ -320,7 +322,8 @@ export default function AdminSeedJobsScreen() {
             value={titles}
             onChangeText={(value) => {
               setTitles(value);
-              if (error) setError(null);
+              setError(null);
+              setSuccessMessage(null);
             }}
             placeholder="Enter title templates..."
           />
@@ -330,7 +333,8 @@ export default function AdminSeedJobsScreen() {
             value={descriptions}
             onChangeText={(value) => {
               setDescriptions(value);
-              if (error) setError(null);
+              setError(null);
+              setSuccessMessage(null);
             }}
             placeholder="Enter description templates..."
           />
@@ -340,7 +344,8 @@ export default function AdminSeedJobsScreen() {
             value={jobsPerLocation}
             onChangeText={(value) => {
               setJobsPerLocation(value);
-              if (error) setError(null);
+              setError(null);
+              setSuccessMessage(null);
             }}
             placeholder="3"
           />
@@ -350,7 +355,8 @@ export default function AdminSeedJobsScreen() {
             value={sponsoredRatio}
             onChangeText={(value) => {
               setSponsoredRatio(value);
-              if (error) setError(null);
+              setError(null);
+              setSuccessMessage(null);
             }}
             placeholder="0.2"
           />
@@ -360,10 +366,17 @@ export default function AdminSeedJobsScreen() {
             value={contactPhone}
             onChangeText={(value) => {
               setContactPhone(value);
-              if (error) setError(null);
+              setError(null);
+              setSuccessMessage(null);
             }}
             placeholder="0700000000"
           />
+
+          {contactPhoneError ? (
+            <AppText variant="caption" tone="error">
+              {contactPhoneError}
+            </AppText>
+          ) : null}
 
           {loadingLocations ? (
             <View style={loadingBoxStyle}>

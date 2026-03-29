@@ -29,17 +29,8 @@ function JobCardComponent({
   const { theme } = useTheme();
   const { saved, toggleSave } = useSavedJob(job.id);
 
-  const {
-    applyOpen,
-    setApplyOpen,
-    applied,
-    submitting,
-    name,
-    setName,
-    phoneInput,
-    setPhoneInput,
-    submitApplication,
-  } = useApplyJob(job);
+  const { applyOpen, setApplyOpen, applied, submitting, submitApplication } =
+    useApplyJob(job);
 
   const isSponsoredActive =
     highlightSponsored && Boolean(job.is_currently_sponsored);
@@ -73,10 +64,6 @@ function JobCardComponent({
         visible={applyOpen}
         onClose={() => setApplyOpen(false)}
         submitting={submitting}
-        name={name}
-        setName={setName}
-        phoneInput={phoneInput}
-        setPhoneInput={setPhoneInput}
         onSubmit={submitApplication}
       />
     </AppCard>

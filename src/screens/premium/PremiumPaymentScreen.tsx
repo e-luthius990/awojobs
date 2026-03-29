@@ -1,7 +1,11 @@
 import React, { useCallback, useMemo, useState, type ViewStyle } from "react";
-import { Linking, View } from "react-native";
-import { useNavigation, useRoute } from "@react-navigation/native";
-import { supabase } from "../../core/supabase";
+import { View } from "react-native";
+import {
+  useNavigation,
+  useRoute,
+  type RouteProp,
+} from "@react-navigation/native";
+import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 
 import { useTheme } from "../../theme/useTheme";
 import { AppScreen } from "../../ui/AppScreen";
@@ -11,27 +15,18 @@ import { AppCard } from "../../ui/AppCard";
 import { AppButton } from "../../ui/AppButton";
 import { InlineAlert } from "../../ui/InlineAlert";
 import { StatusBadge } from "../../ui/StatusBadge";
+import type { RootStackParamList } from "../../navigation/RootNavigator";
+import {
+  openPremiumPaymentUrl,
+  checkPremiumPaymentStatus,
+  type PremiumPurpose,
+} from "../../services/premium.payment.service";
 
-type PremiumPurpose = "premium_1_day" | "premium_7_days" | "premium_30_days";
-
-type RouteParams = {
-  purpose: PremiumPurpose;
-  planLabel: string;
-  amount: number;
-  intentId?: string | null;
-  paymentReference?: string | null;
-};
-
-type PremiumPaymentResponse = {
-  payment_url?: string | null;
-  checkout_url?: string | null;
-  payment_reference?: string | null;
-  intent_id?: string | null;
-  status?: string | null;
-  message?: string | null;
-  active?: boolean | null;
-  error?: string | null;
-};
+type PremiumPaymentRouteProp = RouteProp<RootStackParamList, "PremiumPayment">;
+type PremiumPaymentNavigationProp = NativeStackNavigationProp<
+  RootStackParamList,
+  "PremiumPayment"
+>;
 
 function formatCurrency(amount: number) {
   return `UGX ${amount.toLocaleString()}`;
@@ -45,8 +40,6 @@ function purposeLabel(purpose: PremiumPurpose) {
       return "7 Days Access";
     case "premium_30_days":
       return "30 Days Access";
-    default:
-      return "Premium Access";
   }
 }
 
@@ -58,27 +51,25 @@ function purposeDescription(purpose: PremiumPurpose) {
       return "A practical weekly option for broader discovery.";
     case "premium_30_days":
       return "Longer access for more consistent job searching.";
-    default:
-      return "Premium access.";
   }
 }
 
 export default function PremiumPaymentScreen() {
-  const navigation = useNavigation<any>();
-  const route = useRoute<any>();
+  const navigation = useNavigation<PremiumPaymentNavigationProp>();
+  const route = useRoute<PremiumPaymentRouteProp>();
   const { theme } = useTheme();
 
   const { purpose, planLabel, amount, intentId, paymentReference } =
-    (route.params ?? {}) as RouteParams;
+    route.params;
 
   const [startingPayment, setStartingPayment] = useState(false);
   const [checkingStatus, setCheckingStatus] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
-  const safePurpose = purpose ?? "premium_7_days";
-  const safePlanLabel = planLabel ?? purposeLabel(safePurpose);
-  const safeAmount = Number.isFinite(amount) ? amount : 0;
+  const hasPaymentReference = Boolean(intentId || paymentReference);
+  const safePlanLabel = planLabel || purposeLabel(purpose);
+  const safeAmount = Number.isFinite(amount) && amount > 0 ? amount : null;
 
   const contentStyle = useMemo<ViewStyle>(
     () => ({
@@ -137,82 +128,63 @@ export default function PremiumPaymentScreen() {
   );
 
   const openExternalPayment = useCallback(async () => {
-    if (startingPayment) return;
+    if (startingPayment || checkingStatus) return;
+
+    if (!hasPaymentReference) {
+      setError("Payment session is missing. Please go back and try again.");
+      return;
+    }
+
+    setStartingPayment(true);
+    setError(null);
+    setStatusMessage(null);
 
     try {
-      setStartingPayment(true);
-      setError(null);
-      setStatusMessage(null);
+      const result = await openPremiumPaymentUrl({
+        purpose,
+        intentId: intentId ?? null,
+        paymentReference: paymentReference ?? null,
+      });
 
-      const { data, error } = await supabase.functions.invoke(
-        "start_premium_payment",
-        {
-          body: {
-            purpose: safePurpose,
-            intent_id: intentId ?? null,
-            payment_reference: paymentReference ?? null,
-          },
-        },
-      );
-
-      if (error) throw error;
-
-      const payload = (data ?? {}) as PremiumPaymentResponse;
-
-      if (payload.error) {
-        throw new Error(payload.error);
+      if (!result.ok) {
+        setError(result.error.message);
       }
-
-      const url = payload.payment_url ?? payload.checkout_url ?? null;
-
-      if (!url) {
-        throw new Error(
-          payload.message ?? "Payment link could not be created.",
-        );
-      }
-
-      const supported = await Linking.canOpenURL(url);
-      if (!supported) {
-        throw new Error("Payment link could not be opened on this device.");
-      }
-
-      await Linking.openURL(url);
-    } catch (err: any) {
-      setError(err?.message ?? "Unable to continue. Please try again.");
     } finally {
       setStartingPayment(false);
     }
-  }, [intentId, paymentReference, safePurpose, startingPayment]);
+  }, [
+    checkingStatus,
+    hasPaymentReference,
+    intentId,
+    paymentReference,
+    purpose,
+    startingPayment,
+  ]);
 
   const checkPaymentStatus = useCallback(async () => {
-    if (checkingStatus) return;
+    if (checkingStatus || startingPayment) return;
+
+    if (!hasPaymentReference) {
+      setError("Payment session is missing. Please go back and try again.");
+      return;
+    }
+
+    setCheckingStatus(true);
+    setError(null);
+    setStatusMessage(null);
 
     try {
-      setCheckingStatus(true);
-      setError(null);
-      setStatusMessage(null);
+      const result = await checkPremiumPaymentStatus({
+        intentId: intentId ?? null,
+        paymentReference: paymentReference ?? null,
+      });
 
-      const { data, error } = await supabase.functions.invoke(
-        "check_premium_status",
-        {
-          body: {
-            intent_id: intentId ?? null,
-            payment_reference: paymentReference ?? null,
-          },
-        },
-      );
-
-      if (error) throw error;
-
-      const payload = (data ?? {}) as PremiumPaymentResponse;
-
-      if (payload.error) {
-        throw new Error(payload.error);
+      if (!result.ok) {
+        setError(result.error.message);
+        return;
       }
 
-      const status = payload.status ?? null;
-
-      if (status === "confirmed" || payload.active === true) {
+      if (result.data.status === "confirmed" || result.data.active) {
         navigation.reset({
           index: 1,
           routes: [{ name: "App" }, { name: "Premium" }],
@@ -220,20 +192,39 @@ export default function PremiumPaymentScreen() {
         return;
       }
 
-      if (status === "pending") {
+      if (result.data.status === "pending") {
         setStatusMessage(
           "Your payment is still being processed. Check again shortly.",
         );
         return;
       }
 
-      setStatusMessage("We have not received payment confirmation yet.");
-    } catch (err: any) {
-      setError(err?.message ?? "Unable to check payment status.");
+      if (
+        result.data.status === "failed" ||
+        result.data.status === "cancelled" ||
+        result.data.status === "expired"
+      ) {
+        setStatusMessage(
+          result.data.message ??
+            "This payment was not completed. You can try again.",
+        );
+        return;
+      }
+
+      setStatusMessage(
+        result.data.message ?? "We have not received payment confirmation yet.",
+      );
     } finally {
       setCheckingStatus(false);
     }
-  }, [checkingStatus, intentId, navigation, paymentReference]);
+  }, [
+    checkingStatus,
+    hasPaymentReference,
+    intentId,
+    navigation,
+    paymentReference,
+    startingPayment,
+  ]);
 
   return (
     <AppScreen scroll>
@@ -243,6 +234,14 @@ export default function PremiumPaymentScreen() {
           subtitle="Complete payment to activate your plan."
           onBackPress={() => navigation.goBack()}
         />
+
+        {!hasPaymentReference ? (
+          <InlineAlert
+            tone="error"
+            title="Invalid payment session"
+            message="This premium payment session is missing required identifiers. Go back and start again."
+          />
+        ) : null}
 
         {error ? <InlineAlert tone="error" message={error} /> : null}
 
@@ -258,12 +257,14 @@ export default function PremiumPaymentScreen() {
               <View style={{ flex: 1, gap: theme.spacing.xs }}>
                 <AppText variant="titleLg">{safePlanLabel}</AppText>
                 <AppText variant="bodySm" tone="secondary">
-                  {purposeDescription(safePurpose)}
+                  {purposeDescription(purpose)}
                 </AppText>
               </View>
 
               <View style={valueBlockStyle}>
-                <AppText variant="h2">{formatCurrency(safeAmount)}</AppText>
+                <AppText variant="h2">
+                  {safeAmount !== null ? formatCurrency(safeAmount) : "—"}
+                </AppText>
               </View>
             </View>
           </View>
@@ -287,7 +288,7 @@ export default function PremiumPaymentScreen() {
                 Purpose
               </AppText>
               <AppText variant="bodySm" weight="700">
-                {purposeLabel(safePurpose)}
+                {purposeLabel(purpose)}
               </AppText>
             </View>
 
@@ -296,7 +297,9 @@ export default function PremiumPaymentScreen() {
                 Amount
               </AppText>
               <AppText variant="bodySm" weight="700">
-                {formatCurrency(safeAmount)}
+                {safeAmount !== null
+                  ? formatCurrency(safeAmount)
+                  : "Unavailable"}
               </AppText>
             </View>
 
@@ -351,17 +354,17 @@ export default function PremiumPaymentScreen() {
         <View style={actionGroupStyle}>
           <AppButton
             title="Continue to Payment"
-            onPress={openExternalPayment}
+            onPress={() => void openExternalPayment()}
             loading={startingPayment}
-            disabled={startingPayment || checkingStatus}
+            disabled={startingPayment || checkingStatus || !hasPaymentReference}
             variant="primary"
           />
 
           <AppButton
             title="Check Payment Status"
-            onPress={checkPaymentStatus}
+            onPress={() => void checkPaymentStatus()}
             loading={checkingStatus}
-            disabled={checkingStatus || startingPayment}
+            disabled={checkingStatus || startingPayment || !hasPaymentReference}
             variant="secondary"
           />
         </View>

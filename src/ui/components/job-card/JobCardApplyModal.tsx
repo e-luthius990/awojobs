@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo } from "react";
+import React, { useCallback, useMemo, useRef } from "react";
 import {
   KeyboardAvoidingView,
   Modal,
@@ -9,46 +9,27 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { normalizeUgPhone } from "@utils/normalizeUgPhone";
 
 import { useTheme } from "../../../theme/useTheme";
 import { AppText } from "../../AppText";
-import { AppInput } from "../../AppInput";
 import { AppButton } from "../../AppButton";
 
 type Props = {
   visible: boolean;
   onClose: () => void;
   submitting: boolean;
-  name: string;
-  setName: (v: string) => void;
-  phoneInput: string;
-  setPhoneInput: (v: string) => void;
   onSubmit: () => Promise<void>;
 };
-
-function isValidUgPhone(input: string) {
-  const normalized = normalizeUgPhone(input);
-  return /^\+2567\d{8}$/.test(normalized);
-}
 
 export default function JobCardApplyModal({
   visible,
   onClose,
   submitting,
-  name,
-  setName,
-  phoneInput,
-  setPhoneInput,
   onSubmit,
 }: Props) {
   const { theme } = useTheme();
   const insets = useSafeAreaInsets();
-
-  const nameTrimmed = name.trim();
-  const nameValid = nameTrimmed.length >= 2;
-  const phoneValid = isValidUgPhone(phoneInput);
-  const canSubmit = nameValid && phoneValid && !submitting;
+  const submitLockedRef = useRef(false);
 
   const rootStyle = useMemo<ViewStyle>(
     () => ({
@@ -149,28 +130,21 @@ export default function JobCardApplyModal({
     ],
   );
 
-  const formStyle = useMemo<ViewStyle>(
+  const infoBoxStyle = useMemo<ViewStyle>(
     () => ({
-      gap: theme.spacing.md,
-    }),
-    [theme.spacing.md],
-  );
-
-  const helperBoxStyle = useMemo<ViewStyle>(
-    () => ({
-      marginTop: theme.spacing.xs,
-      paddingHorizontal: theme.spacing.sm,
-      paddingVertical: theme.spacing.sm,
+      paddingHorizontal: theme.spacing.md,
+      paddingVertical: theme.spacing.md,
       borderRadius: theme.radius.lg,
       backgroundColor: theme.colors.bgSurfaceMuted,
       borderWidth: 1,
       borderColor: theme.colors.borderMuted,
+      gap: theme.spacing.xs,
     }),
     [
       theme.colors.bgSurfaceMuted,
       theme.colors.borderMuted,
       theme.radius.lg,
-      theme.spacing.sm,
+      theme.spacing.md,
       theme.spacing.xs,
     ],
   );
@@ -197,10 +171,16 @@ export default function JobCardApplyModal({
     onClose();
   }, [onClose, submitting]);
 
-  const handleSubmit = useCallback(() => {
-    if (!canSubmit) return;
-    void onSubmit();
-  }, [canSubmit, onSubmit]);
+  const handleSubmit = useCallback(async () => {
+    if (submitting || submitLockedRef.current) return;
+
+    submitLockedRef.current = true;
+    try {
+      await onSubmit();
+    } finally {
+      submitLockedRef.current = false;
+    }
+  }, [onSubmit, submitting]);
 
   return (
     <Modal
@@ -215,7 +195,12 @@ export default function JobCardApplyModal({
         style={{ flex: 1 }}
       >
         <View style={rootStyle}>
-          <Pressable style={backdropTapAreaStyle} onPress={handleClose} />
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Close application form"
+            style={backdropTapAreaStyle}
+            onPress={handleClose}
+          />
 
           <View style={sheetStyle}>
             <View style={handleWrapStyle}>
@@ -226,8 +211,8 @@ export default function JobCardApplyModal({
               <View style={headerStyle}>
                 <AppText variant="h3">Apply for this job</AppText>
                 <AppText variant="bodySm" tone="secondary">
-                  Submit your contact details so the employer can review your
-                  application.
+                  Your profile name and phone number will be shared with the
+                  employer.
                 </AppText>
               </View>
 
@@ -255,53 +240,24 @@ export default function JobCardApplyModal({
               </Pressable>
             </View>
 
-            <View style={formStyle}>
-              <AppInput
-                label="Full name"
-                placeholder="Enter your full name"
-                value={name}
-                onChangeText={setName}
-                editable={!submitting}
-                autoCapitalize="words"
-                autoCorrect={false}
-                returnKeyType="next"
-                error={
-                  name.length > 0 && !nameValid
-                    ? "Enter at least 2 characters."
-                    : undefined
-                }
-              />
-
-              <AppInput
-                label="Phone number"
-                placeholder="07XXXXXXXX"
-                value={phoneInput}
-                onChangeText={setPhoneInput}
-                keyboardType="phone-pad"
-                editable={!submitting}
-                autoCorrect={false}
-                returnKeyType="done"
-                hint="Use your Uganda mobile number."
-                error={
-                  phoneInput.length > 0 && !phoneValid
-                    ? "Enter a valid Uganda phone number."
-                    : undefined
-                }
-              />
-            </View>
-
-            <View style={helperBoxStyle}>
+            <View style={infoBoxStyle}>
+              <AppText variant="bodySm">
+                When you submit, AwoJobs sends your saved profile details to the
+                employer.
+              </AppText>
               <AppText variant="caption" tone="secondary">
-                Your contact details will be shared with the employer for this
-                application.
+                Update your profile first if your name or phone number is
+                outdated.
               </AppText>
             </View>
 
             <View style={actionsStyle}>
               <AppButton
                 title={submitting ? "Sending..." : "Submit application"}
-                onPress={handleSubmit}
-                disabled={!canSubmit}
+                onPress={() => {
+                  void handleSubmit();
+                }}
+                disabled={submitting}
                 loading={submitting}
                 variant="primary"
               />

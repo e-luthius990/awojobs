@@ -16,8 +16,17 @@ function json(body: unknown, status = 200) {
 }
 
 function isUUID(id: string) {
-  return /^[0-9a-fA-F-]{36}$/.test(id);
+  return /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$/.test(
+    id,
+  );
 }
+
+type ClientPaymentStatus =
+  | "pending"
+  | "confirmed"
+  | "failed"
+  | "expired"
+  | "unknown";
 
 serve(async (req) => {
   if (req.method !== "POST") {
@@ -25,8 +34,6 @@ serve(async (req) => {
   }
 
   try {
-    /* ================= AUTH ================= */
-
     const authHeader = req.headers.get("Authorization");
     if (!authHeader?.startsWith("Bearer ")) {
       return json({ error: "Unauthorized" }, 401);
@@ -35,43 +42,52 @@ serve(async (req) => {
     const anon = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_ANON_KEY")!,
-      { auth: { persistSession: false } }
+      { auth: { persistSession: false } },
     );
 
     const token = authHeader.replace("Bearer ", "").trim();
-    const { data: authRes } = await anon.auth.getUser(token);
+    const {
+      data: authRes,
+      error: authError,
+    } = await anon.auth.getUser(token);
 
-    if (!authRes?.user) {
+    if (authError || !authRes?.user) {
       return json({ error: "Unauthorized" }, 401);
     }
 
     const userId = authRes.user.id;
 
-    /* ================= RATE LIMIT ================= */
-
     const service = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
-      { auth: { persistSession: false } }
+      { auth: { persistSession: false } },
     );
 
     const oneMinuteAgo = new Date(Date.now() - 60_000).toISOString();
 
-    const { count } = await service
+    const { count, error: rateCountError } = await service
       .from("payment_status_poll_log")
       .select("id", { count: "exact", head: true })
       .eq("user_id", userId)
       .gte("created_at", oneMinuteAgo);
 
+    if (rateCountError) {
+      console.error("[check_payment_status rate-count]", rateCountError);
+      return json({ error: "Could not process request" }, 500);
+    }
+
     if ((count ?? 0) >= POLL_LIMIT_PER_MIN) {
       return json({ error: "Too many requests" }, 429);
     }
 
-    await service.from("payment_status_poll_log").insert({
-      user_id: userId,
-    });
+    const { error: rateInsertError } = await service
+      .from("payment_status_poll_log")
+      .insert({ user_id: userId });
 
-    /* ================= BODY ================= */
+    if (rateInsertError) {
+      console.error("[check_payment_status rate-log]", rateInsertError);
+      return json({ error: "Could not process request" }, 500);
+    }
 
     const body = await req.json().catch(() => null);
     if (!body || typeof body.intent_id !== "string") {
@@ -84,56 +100,49 @@ serve(async (req) => {
       return json({ error: "Invalid intent_id" }, 400);
     }
 
-    /* ================= LOOKUP ================= */
-
-    const { data, error } = await service
+    const { data, error: lookupError } = await service
       .from("employer_payments")
       .select("status, job_id, expires_at")
       .eq("id", intentId)
       .eq("user_id", userId)
       .maybeSingle();
 
-    if (error) {
-      console.error("[check_payment_status]", error);
-      return json({ error: "Lookup failed" }, 400);
+    if (lookupError) {
+      console.error("[check_payment_status lookup]", lookupError);
+      return json({ error: "Lookup failed" }, 500);
     }
 
     if (!data) {
       return json({
-        status: "unknown",
+        status: "unknown" satisfies ClientPaymentStatus,
         job_id: null,
       });
     }
 
-    /* ================= EXPIRY CHECK ================= */
-
-    let status = data.status;
+    let normalizedStatus: ClientPaymentStatus;
 
     if (
-      status === "initiated" &&
       data.expires_at &&
-      new Date(data.expires_at).getTime() <= Date.now()
+      new Date(data.expires_at).getTime() <= Date.now() &&
+      (data.status === "initiated" || data.status === "pending")
     ) {
-      status = "expired";
-    }
-
-    const allowed = [
-      "initiated",
-      "pending",
-      "confirmed",
-      "failed",
-      "expired",
-    ];
-
-    if (!allowed.includes(status)) {
-      status = "unknown";
+      normalizedStatus = "expired";
+    } else if (data.status === "confirmed") {
+      normalizedStatus = "confirmed";
+    } else if (data.status === "failed") {
+      normalizedStatus = "failed";
+    } else if (data.status === "expired") {
+      normalizedStatus = "expired";
+    } else if (data.status === "initiated" || data.status === "pending") {
+      normalizedStatus = "pending";
+    } else {
+      normalizedStatus = "unknown";
     }
 
     return json({
-      status,
+      status: normalizedStatus,
       job_id: data.job_id ?? null,
     });
-
   } catch (err) {
     console.error("[check_payment_status]", err);
     return json({ error: "Server error" }, 500);

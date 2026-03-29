@@ -22,13 +22,21 @@ import { InlineAlert } from "../../ui/InlineAlert";
 import { EmptyState } from "../../ui/EmptyState";
 import { SkeletonCard } from "../../ui/Skeleton";
 
+type JobStatus =
+  | "draft"
+  | "pending_payment"
+  | "active"
+  | "expired"
+  | "closed"
+  | "flagged"
+  | "deleted";
+
 type ReportedJob = {
   id: string;
   title: string;
   employer_id: string;
-  reports_count: number;
   created_at: string;
-  status: string;
+  status: JobStatus;
 };
 
 export default function ReportedJobsScreen() {
@@ -50,15 +58,24 @@ export default function ReportedJobsScreen() {
     try {
       const { data, error } = await supabase
         .from("jobs")
-        .select("id,title,employer_id,reports_count,created_at,status")
+        .select("id,title,employer_id,created_at,status")
         .eq("status", "flagged")
-        .order("reports_count", { ascending: false })
+        .order("created_at", { ascending: false })
         .limit(50);
 
-      if (error) throw error;
+      if (error) {
+        console.error("ReportedJobsScreen load failed", {
+          message: error.message,
+          details: error.details,
+          hint: error.hint,
+          code: error.code,
+        });
+        throw error;
+      }
+
       setJobs((data ?? []) as ReportedJob[]);
-    } catch {
-      setError("Could not load reported jobs.");
+    } catch (err: any) {
+      setError(err?.message || "Could not load reported jobs.");
       if (!silent) setJobs([]);
     } finally {
       if (!silent) setLoading(false);
@@ -92,16 +109,31 @@ export default function ReportedJobsScreen() {
       setActionLoadingId(id);
       setError(null);
 
-      const { error } = await supabase
+      const { data, error } = await supabase
         .from("jobs")
-        .update({ status: "active", reports_count: 0 })
-        .eq("id", id);
+        .update({ status: "active" })
+        .eq("id", id)
+        .select("id")
+        .maybeSingle();
 
-      if (error) throw error;
+      if (error) {
+        console.error("approveJob failed", {
+          id,
+          message: error.message,
+          details: error.details,
+          hint: error.hint,
+          code: error.code,
+        });
+        throw error;
+      }
+
+      if (!data) {
+        throw new Error("Job not updated");
+      }
 
       setJobs((prev) => prev.filter((job) => job.id !== id));
-    } catch {
-      setError("Failed to approve job.");
+    } catch (err: any) {
+      setError(err?.message || "Failed to approve job.");
     } finally {
       setActionLoadingId(null);
     }
@@ -112,16 +144,31 @@ export default function ReportedJobsScreen() {
       setActionLoadingId(id);
       setError(null);
 
-      const { error } = await supabase
+      const { data, error } = await supabase
         .from("jobs")
-        .update({ status: "removed" })
-        .eq("id", id);
+        .update({ status: "deleted" })
+        .eq("id", id)
+        .select("id")
+        .maybeSingle();
 
-      if (error) throw error;
+      if (error) {
+        console.error("removeJob failed", {
+          id,
+          message: error.message,
+          details: error.details,
+          hint: error.hint,
+          code: error.code,
+        });
+        throw error;
+      }
+
+      if (!data) {
+        throw new Error("Job not updated");
+      }
 
       setJobs((prev) => prev.filter((job) => job.id !== id));
-    } catch {
-      setError("Failed to remove job.");
+    } catch (err: any) {
+      setError(err?.message || "Failed to remove job.");
     } finally {
       setActionLoadingId(null);
     }
@@ -132,14 +179,29 @@ export default function ReportedJobsScreen() {
       setSuspendingEmployerId(employerId);
       setError(null);
 
-      const { error } = await supabase
+      const { data, error } = await supabase
         .from("profiles")
         .update({ is_suspended: true })
-        .eq("id", employerId);
+        .eq("id", employerId)
+        .select("id")
+        .maybeSingle();
 
-      if (error) throw error;
-    } catch {
-      setError("Failed to suspend employer.");
+      if (error) {
+        console.error("suspendEmployer failed", {
+          employerId,
+          message: error.message,
+          details: error.details,
+          hint: error.hint,
+          code: error.code,
+        });
+        throw error;
+      }
+
+      if (!data) {
+        throw new Error("Employer not suspended");
+      }
+    } catch (err: any) {
+      setError(err?.message || "Failed to suspend employer.");
     } finally {
       setSuspendingEmployerId(null);
     }
@@ -246,8 +308,7 @@ export default function ReportedJobsScreen() {
                     </AppText>
 
                     <AppText variant="caption" tone="secondary">
-                      {item.reports_count} reports •{" "}
-                      {new Date(item.created_at).toLocaleDateString()}
+                      Flagged • {new Date(item.created_at).toLocaleDateString()}
                     </AppText>
                   </View>
 
@@ -285,7 +346,7 @@ export default function ReportedJobsScreen() {
                       disabled={busy || suspending}
                       size="sm"
                       fullWidth={false}
-                      variant="ghost"
+                      variant="secondary"
                     />
                   </View>
                 </View>

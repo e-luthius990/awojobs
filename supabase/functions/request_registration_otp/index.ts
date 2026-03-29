@@ -13,11 +13,13 @@ const AT_API_KEY = (Deno.env.get("AFRICAS_TALKING_API_KEY") ?? "").trim();
 const OTP_EXPIRY_MINUTES = 5;
 const PHONE_RATE_LIMIT = 3;
 
-if (!SUPABASE_URL || !SERVICE_ROLE || !ENCRYPTION_KEY)
+if (!SUPABASE_URL || !SERVICE_ROLE || !ENCRYPTION_KEY) {
   throw new Error("Missing required Supabase env variables.");
+}
 
-if (!AT_USERNAME || !AT_API_KEY)
+if (!AT_USERNAME || !AT_API_KEY) {
   throw new Error("Missing Africa's Talking credentials.");
+}
 
 /* ================= HELPERS ================= */
 
@@ -49,7 +51,7 @@ function normalizeUgPhone(phone: string): string {
     throw new Error("Invalid Uganda mobile number");
   }
 
-  return "+" + normalized; // 🔥 THIS LINE FIXES EVERYTHING
+  return "+" + normalized;
 }
 
 function base64ToBytes(base64: string) {
@@ -67,7 +69,7 @@ async function getKey() {
     raw,
     { name: "AES-GCM" },
     false,
-    ["encrypt"]
+    ["encrypt"],
   );
 }
 
@@ -78,18 +80,18 @@ async function encryptPassword(password: string): Promise<string> {
   const encryptedBuffer = await crypto.subtle.encrypt(
     { name: "AES-GCM", iv },
     key,
-    new TextEncoder().encode(password)
+    new TextEncoder().encode(password),
   );
 
   return `${bytesToBase64(iv)}:${bytesToBase64(
-    new Uint8Array(encryptedBuffer)
+    new Uint8Array(encryptedBuffer),
   )}`;
 }
 
 async function sha256(text: string) {
   const buffer = await crypto.subtle.digest(
     "SHA-256",
-    new TextEncoder().encode(text.trim())
+    new TextEncoder().encode(text.trim()),
   );
 
   return Array.from(new Uint8Array(buffer))
@@ -103,94 +105,154 @@ function generateSecureOTP(): string {
   return (array[0] % 900000 + 100000).toString();
 }
 
+function validateFullName(value: unknown): string {
+  const fullName = typeof value === "string" ? value.trim() : "";
+
+  if (!fullName) {
+    throw new Error("Full name is required");
+  }
+
+  if (fullName.length < 2) {
+    throw new Error("Full name is too short");
+  }
+
+  if (fullName.length > 120) {
+    throw new Error("Full name is too long");
+  }
+
+  return fullName;
+}
+
+function validateBusinessName(value: unknown, role: string): string | null {
+  if (role !== "employer") {
+    return null;
+  }
+
+  const businessName = typeof value === "string" ? value.trim() : "";
+
+  if (!businessName) {
+    return null;
+  }
+
+  if (businessName.length < 2) {
+    throw new Error("Business name is too short");
+  }
+
+  if (businessName.length > 120) {
+    throw new Error("Business name is too long");
+  }
+
+  return businessName;
+}
+
 /* ================= EDGE ================= */
 
 serve(async (req) => {
   try {
     if (req.method !== "POST") {
-      return json({ error: "Method not allowed" });
+      return json({ error: "Method not allowed" }, 405);
     }
 
     const body = await req.json().catch(() => null);
-    if (!body) {
-      return json({ error: "Invalid request" });
+    if (!body || typeof body !== "object") {
+      return json({ error: "Invalid request" }, 400);
     }
 
-    const { phone, full_name, password, role } = body;
+    const { phone, full_name, password, role, business_name } = body;
 
     if (!phone || !full_name || !password || !role) {
-      return json({ error: "Invalid request" });
+      return json({ error: "Invalid request" }, 400);
     }
 
     let normalized: string;
+    let safeFullName: string;
+    let safeBusinessName: string | null;
 
     try {
-      normalized = normalizeUgPhone(phone);
-    } catch {
-      return json({ error: "Invalid phone format" });
+      normalized = normalizeUgPhone(String(phone));
+      safeFullName = validateFullName(full_name);
+      safeBusinessName = validateBusinessName(business_name, String(role));
+    } catch (err) {
+      return json(
+        { error: err instanceof Error ? err.message : "Invalid request" },
+        400,
+      );
     }
 
     if (!["employer", "job_seeker"].includes(role)) {
-      return json({ error: "Invalid role" });
+      return json({ error: "Invalid role" }, 400);
     }
 
-    if (password.length < 8) {
-      return json({ error: "Weak password" });
+    if (
+      typeof password !== "string" ||
+      password.length < 8 ||
+      !/^(?=.*[A-Za-z])(?=.*\d).{8,}$/.test(password)
+    ) {
+      return json(
+        { error: "Password must be at least 8 characters and include letters and numbers." },
+        400,
+      );
     }
 
     const admin = createClient(SUPABASE_URL, SERVICE_ROLE);
 
-    /* RATE LIMIT */
-
     const windowStart = new Date(
-      Date.now() - 15 * 60 * 1000
+      Date.now() - 15 * 60 * 1000,
     ).toISOString();
 
-    const { count } = await admin
+    const { count, error: rateError } = await admin
       .from("registration_otps")
       .select("id", { count: "exact", head: true })
       .eq("phone_number", normalized)
       .gt("created_at", windowStart);
 
-    if ((count ?? 0) >= PHONE_RATE_LIMIT) {
-      return json({ error: "Too many attempts. Please wait." });
+    if (rateError) {
+      console.error("OTP rate limit query error:", rateError);
+      return json({ error: "Unable to process request" }, 500);
     }
 
-    /* GENERATE OTP */
+    if ((count ?? 0) >= PHONE_RATE_LIMIT) {
+      return json({ error: "Too many attempts. Please wait." }, 429);
+    }
 
     const otp = generateSecureOTP();
     const otpHash = await sha256(otp);
     const encryptedPassword = await encryptPassword(password);
 
-    /* INVALIDATE OLD */
-
-    await admin
+    const { error: invalidateError } = await admin
       .from("registration_otps")
       .update({ used_at: new Date().toISOString() })
       .eq("phone_number", normalized)
       .is("used_at", null);
 
-    /* INSERT */
+    if (invalidateError) {
+      console.error("OTP invalidate error:", invalidateError);
+      return json({ error: "Unable to process request" }, 500);
+    }
+
+    const insertPayload: Record<string, unknown> = {
+      phone_number: normalized,
+      otp_hash: otpHash,
+      encrypted_password: encryptedPassword,
+      full_name: safeFullName,
+      role,
+      expires_at: new Date(
+        Date.now() + OTP_EXPIRY_MINUTES * 60 * 1000,
+      ).toISOString(),
+    };
+
+    if (role === "employer") {
+      insertPayload.business_name = safeBusinessName;
+    }
 
     const { error: insertError } = await admin
       .from("registration_otps")
-      .insert({
-        phone_number: normalized,
-        otp_hash: otpHash,
-        encrypted_password: encryptedPassword,
-        full_name: full_name.trim(),
-        role,
-        expires_at: new Date(
-          Date.now() + OTP_EXPIRY_MINUTES * 60 * 1000
-        ).toISOString(),
-      });
+      .insert(insertPayload);
 
     if (insertError) {
       console.error("OTP insert error:", insertError);
-      return json({ error: "Failed to generate OTP" });
+      return json({ error: "Failed to generate OTP" }, 500);
     }
-
-    /* SEND SMS */
 
     const endpoint =
       AT_USERNAME === "sandbox"
@@ -215,15 +277,14 @@ serve(async (req) => {
 
     if (!smsResponse.ok) {
       console.error("SMS failed:", smsText);
-      return json({ error: "SMS delivery failed" });
+      return json({ error: "SMS delivery failed" }, 502);
     }
 
     console.log("SMS success:", smsText);
 
-    return json({ success: true });
-
+    return json({ success: true }, 200);
   } catch (err) {
     console.error("Edge error:", err);
-    return json({ error: "Internal error" });
+    return json({ error: "Internal error" }, 500);
   }
 });

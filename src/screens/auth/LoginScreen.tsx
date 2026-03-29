@@ -16,8 +16,13 @@ import {
   TextInput,
   type ViewStyle,
 } from "react-native";
-import { useNavigation } from "@react-navigation/native";
+import {
+  useNavigation,
+  useRoute,
+  type RouteProp,
+} from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
+import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 
 import { login } from "../../auth/auth.service";
 import { useTheme } from "../../theme/useTheme";
@@ -27,29 +32,26 @@ import { AppButton } from "../../ui/AppButton";
 import { AppInput } from "../../ui/AppInput";
 import { InlineAlert } from "../../ui/InlineAlert";
 import { AppEntrance } from "../../ui/AppEntrance";
+import type { AuthStackParamList } from "../../navigation/AuthNavigator";
 
 const FORM_TITLE = "Login";
 const LOGIN_HINT = "Use the phone number and password linked to your account.";
 
-function normalizePhonePreview(value: string) {
-  return value.trim();
-}
+type LoginNavigationProp = NativeStackNavigationProp<
+  AuthStackParamList,
+  "Login"
+>;
+
+type LoginRouteProp = RouteProp<AuthStackParamList, "Login">;
 
 function validatePhone(value: string): string | null {
   const cleaned = value.replace(/\D/g, "");
 
-  if (!cleaned) return "Phone number is required.";
+  if (cleaned.startsWith("256") && cleaned.length === 12) return null;
+  if (cleaned.startsWith("0") && cleaned.length === 10) return null;
+  if (cleaned.startsWith("7") && cleaned.length === 9) return null;
 
-  const isValidUgNumber =
-    (cleaned.startsWith("256") && cleaned.length === 12) ||
-    (cleaned.startsWith("0") && cleaned.length === 10) ||
-    (cleaned.startsWith("7") && cleaned.length === 9);
-
-  if (!isValidUgNumber) {
-    return "Enter a valid Uganda phone number.";
-  }
-
-  return null;
+  return "Enter a valid Uganda phone number.";
 }
 
 function validatePassword(value: string): string | null {
@@ -59,11 +61,15 @@ function validatePassword(value: string): string | null {
 }
 
 export default function LoginScreen() {
-  const navigation = useNavigation<any>();
+  const navigation = useNavigation<LoginNavigationProp>();
+  const route = useRoute<LoginRouteProp>();
   const { theme } = useTheme();
 
   const passwordRef = useRef<TextInput | null>(null);
   const isMountedRef = useRef(true);
+
+  const forcedRole = route.params?.forcedRole;
+  const intent = route.params?.intent;
 
   const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
@@ -147,7 +153,6 @@ export default function LoginScreen() {
     [
       theme.colors.bgSurface,
       theme.colors.borderDefault,
-      theme.radius,
       theme.shadows.level1,
       theme.spacing.md,
     ],
@@ -262,13 +267,6 @@ export default function LoginScreen() {
     [],
   );
 
-  const legalWrapStyle = useMemo<ViewStyle>(
-    () => ({
-      paddingHorizontal: theme.spacing.lg,
-    }),
-    [theme.spacing.lg],
-  );
-
   const toggleSecure = useCallback(() => {
     setSecure((prev) => !prev);
   }, []);
@@ -286,10 +284,7 @@ export default function LoginScreen() {
   const closeAuthModalIfPossible = useCallback(() => {
     if (navigation.canGoBack()) {
       navigation.goBack();
-      return;
     }
-
-    navigation.getParent()?.goBack?.();
   }, [navigation]);
 
   const handleLogin = useCallback(async () => {
@@ -305,35 +300,35 @@ export default function LoginScreen() {
     }
 
     Keyboard.dismiss();
-
-    if (isMountedRef.current) {
-      setLoading(true);
-    }
+    setLoading(true);
 
     try {
-      await login({
-        phone: normalizePhonePreview(phone),
+      const result = await login({
+        phone,
         password,
       });
 
       if (!isMountedRef.current) return;
 
+      if (!result.ok) {
+        setSubmitError(result.error.message);
+        return;
+      }
+
       closeAuthModalIfPossible();
-    } catch (err) {
-      if (!isMountedRef.current) return;
-
-      const message =
-        err instanceof Error
-          ? err.message
-          : "Unable to sign in right now. Please try again.";
-
-      setSubmitError(message);
     } finally {
       if (isMountedRef.current) {
         setLoading(false);
       }
     }
   }, [phone, password, loading, closeAuthModalIfPossible]);
+
+  const handleOpenRegister = useCallback(() => {
+    navigation.navigate("Register", {
+      forcedRole: forcedRole ?? "employer",
+      intent,
+    });
+  }, [navigation, forcedRole, intent]);
 
   return (
     <AppScreen scroll={false} keyboardAvoiding={false} padded={false}>
@@ -490,12 +485,7 @@ export default function LoginScreen() {
 
           <View style={footerStyle}>
             <Pressable
-              onPress={() =>
-                navigation.navigate("Register", {
-                  forcedRole: "employer",
-                  intent: "post_job",
-                })
-              }
+              onPress={handleOpenRegister}
               style={({ pressed }) => [
                 footerPrimaryLinkStyle,
                 pressed ? { opacity: 0.72 } : null,
@@ -507,17 +497,6 @@ export default function LoginScreen() {
                 </AppText>
                 <AppText variant="bodySm" tone="link" weight="700">
                   Create Employer Account
-                </AppText>
-              </View>
-            </Pressable>
-
-            <Pressable
-              onPress={() => navigation.navigate("Terms")}
-              style={({ pressed }) => [pressed ? { opacity: 0.72 } : null]}
-            >
-              <View style={legalWrapStyle}>
-                <AppText variant="caption" tone="secondary" align="center">
-                  By continuing you agree to our Terms
                 </AppText>
               </View>
             </Pressable>

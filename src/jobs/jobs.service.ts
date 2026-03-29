@@ -1,7 +1,7 @@
 import { supabase } from "../core/supabase";
 import { ENV } from "../env";
-import { JobWithCoords } from "./jobs.types";
-import { JobsCursor } from "./jobs.cursor";
+import type { JobWithCoords } from "./jobs.types";
+import type { JobsCursor } from "./jobs.cursor";
 import { getDeviceHash } from "../security/device";
 
 /* =====================================================
@@ -30,6 +30,27 @@ export type JobsPage = {
   new_jobs_count: number;
 };
 
+export type AppErrorCode =
+  | "AUTH_REQUIRED"
+  | "SESSION_EXPIRED"
+  | "FORBIDDEN"
+  | "NOT_FOUND"
+  | "VALIDATION_ERROR"
+  | "RATE_LIMITED"
+  | "NETWORK_ERROR"
+  | "UNKNOWN_ERROR";
+
+export type AppError = {
+  code: AppErrorCode;
+  message: string;
+  retryable: boolean;
+  fieldErrors?: Record<string, string>;
+};
+
+export type AppResult<T> =
+  | { ok: true; data: T }
+  | { ok: false; error: AppError };
+
 type FeedApiJob = {
   id: string;
   title: string;
@@ -45,19 +66,25 @@ type FeedApiJob = {
   is_currently_sponsored?: boolean | null;
 };
 
+type EdgeErrorPayload = {
+  code?: unknown;
+  message?: unknown;
+  retryable?: unknown;
+  fieldErrors?: unknown;
+};
+
 type FeedApiResponse = {
   jobs?: FeedApiJob[];
   nextCursor?: JobsCursor | null;
   premium?: PremiumState | null;
   new_jobs_count?: number;
-  error?: string;
 };
 
 /* =====================================================
    HELPERS
 ===================================================== */
 
-function normalizeLimit(limit?: number) {
+function normalizeLimit(limit?: number): number {
   if (typeof limit !== "number" || !Number.isFinite(limit)) {
     return PAGE_SIZE_DEFAULT;
   }
@@ -86,59 +113,72 @@ async function withTimeout<T>(
   }
 }
 
-function classifyFeedError(
-  status: number | null,
-  rawMessage: string | null,
-): Error {
-  const normalized = (rawMessage ?? "").toLowerCase();
-
-  if (
-    normalized.includes("network_timeout") ||
-    normalized.includes("timed out") ||
-    normalized.includes("failed to fetch") ||
-    normalized.includes("network request failed")
-  ) {
-    return new Error(
-      "We could not load jobs right now. Check your internet connection and try again.",
-    );
+function tryParseJson<T>(value: string): T | null {
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return null;
   }
-
-  if (status === 429 || normalized.includes("rate_limit")) {
-    return new Error("You’re refreshing too quickly. Please wait a moment.");
-  }
-
-  if (normalized.includes("invalid_location_id")) {
-    return new Error("Your selected location is invalid. Please choose it again.");
-  }
-
-  if (normalized.includes("invalid_uganda_location")) {
-    return new Error("Only Uganda locations are supported right now.");
-  }
-
-  if (normalized.includes("database_error") || status === 500) {
-    return new Error("We could not load jobs right now. Please try again.");
-  }
-
-  return new Error("We could not load jobs right now. Please try again.");
 }
 
-function extractErrorMessage(payload: unknown): string | null {
-  if (!payload) return null;
+function isValidScope(value: unknown): value is "local" | "national" {
+  return value === "local" || value === "national";
+}
 
-  if (typeof payload === "string") {
-    return payload;
+function normalizePremiumState(value: unknown): PremiumState | null {
+  if (!value || typeof value !== "object") {
+    return null;
   }
+
+  const candidate = value as Partial<PremiumState>;
 
   if (
-    typeof payload === "object" &&
-    payload !== null &&
-    "error" in payload &&
-    typeof (payload as { error?: unknown }).error === "string"
+    typeof candidate.active !== "boolean" ||
+    !isValidScope(candidate.scope) ||
+    !isValidScope(candidate.requested_scope) ||
+    typeof candidate.can_access_national !== "boolean"
   ) {
-    return (payload as { error: string }).error;
+    return null;
   }
 
-  return null;
+  return {
+    active: candidate.active,
+    scope: candidate.scope,
+    requested_scope: candidate.requested_scope,
+    can_access_national: candidate.can_access_national,
+  };
+}
+
+function isValidFeedApiJob(row: unknown): row is FeedApiJob {
+  if (!row || typeof row !== "object") return false;
+
+  const job = row as Partial<FeedApiJob>;
+
+  return (
+    typeof job.id === "string" &&
+    job.id.trim().length > 0 &&
+    typeof job.title === "string" &&
+    job.title.trim().length > 0 &&
+    typeof job.created_at === "string" &&
+    job.created_at.trim().length > 0
+  );
+}
+
+function isValidCursor(value: unknown): value is JobsCursor {
+  if (!value || typeof value !== "object") return false;
+
+  const cursor = value as Partial<JobsCursor>;
+
+  return (
+    typeof cursor.is_currently_sponsored === "boolean" &&
+    (cursor.sponsored_until === null ||
+      cursor.sponsored_until === undefined ||
+      typeof cursor.sponsored_until === "string") &&
+    typeof cursor.created_at === "string" &&
+    cursor.created_at.trim().length > 0 &&
+    typeof cursor.id === "string" &&
+    cursor.id.trim().length > 0
+  );
 }
 
 function mapJob(row: FeedApiJob): JobWithCoords {
@@ -160,8 +200,135 @@ function mapJob(row: FeedApiJob): JobWithCoords {
   };
 }
 
+function makeError(
+  code: AppErrorCode,
+  message: string,
+  retryable: boolean,
+  fieldErrors?: Record<string, string>,
+): AppError {
+  return { code, message, retryable, fieldErrors };
+}
+
+function normalizeEdgeErrorPayload(payload: unknown): AppError | null {
+  if (!payload || typeof payload !== "object") return null;
+
+  const raw = payload as EdgeErrorPayload;
+  const code = typeof raw.code === "string" ? raw.code : null;
+  const message = typeof raw.message === "string" ? raw.message : null;
+  const retryable =
+    typeof raw.retryable === "boolean" ? raw.retryable : false;
+
+  const fieldErrors =
+    raw.fieldErrors &&
+    typeof raw.fieldErrors === "object" &&
+    !Array.isArray(raw.fieldErrors)
+      ? (raw.fieldErrors as Record<string, string>)
+      : undefined;
+
+  if (!code || !message) return null;
+
+  switch (code) {
+    case "AUTH_REQUIRED":
+      return makeError(
+        "AUTH_REQUIRED",
+        "Please sign in again.",
+        retryable,
+        fieldErrors,
+      );
+
+    case "SESSION_EXPIRED":
+      return makeError(
+        "SESSION_EXPIRED",
+        "Your session has ended. Please sign in again.",
+        retryable,
+        fieldErrors,
+      );
+
+    case "FORBIDDEN":
+      return makeError(
+        "FORBIDDEN",
+        message,
+        retryable,
+        fieldErrors,
+      );
+
+    case "NOT_FOUND":
+      return makeError(
+        "NOT_FOUND",
+        message,
+        retryable,
+        fieldErrors,
+      );
+
+    case "VALIDATION_ERROR":
+      return makeError(
+        "VALIDATION_ERROR",
+        message,
+        retryable,
+        fieldErrors,
+      );
+
+    case "RATE_LIMIT_DEVICE":
+    case "RATE_LIMIT_IP":
+      return makeError(
+        "RATE_LIMITED",
+        "You’re refreshing too quickly. Please wait a moment.",
+        true,
+        fieldErrors,
+      );
+
+    case "RATE_LIMIT_DEVICE_CHECK_FAILED":
+    case "RATE_LIMIT_IP_CHECK_FAILED":
+    case "RATE_LIMIT_LOG_FAILED":
+    case "DATABASE_ERROR":
+    case "INVALID_FEED_RESPONSE":
+    case "INTERNAL_ERROR":
+      return makeError(
+        "UNKNOWN_ERROR",
+        message,
+        retryable,
+        fieldErrors,
+      );
+
+    default:
+      return makeError(
+        "UNKNOWN_ERROR",
+        message,
+        retryable,
+        fieldErrors,
+      );
+  }
+}
+
+function classifyTransportError(input: unknown): AppError {
+  const message =
+    input instanceof Error ? input.message : String(input ?? "");
+
+  const normalized = message.toLowerCase();
+
+  if (
+    normalized.includes("network_timeout") ||
+    normalized.includes("timed out") ||
+    normalized.includes("failed to fetch") ||
+    normalized.includes("network request failed") ||
+    normalized.includes("network")
+  ) {
+    return makeError(
+      "NETWORK_ERROR",
+      "We could not load jobs right now. Check your internet connection and try again.",
+      true,
+    );
+  }
+
+  return makeError(
+    "UNKNOWN_ERROR",
+    "We could not load jobs right now. Please try again.",
+    true,
+  );
+}
+
 /* =====================================================
-   FEED FETCHER (SPONSORED-FIRST KEYSET SAFE)
+   FEED FETCHER
 ===================================================== */
 
 export async function fetchFeedPage(params: {
@@ -169,7 +336,7 @@ export async function fetchFeedPage(params: {
   cursor?: JobsCursor | null;
   limit?: number;
   requestedScope?: "local" | "national";
-}): Promise<JobsPage> {
+}): Promise<AppResult<JobsPage>> {
   const {
     locationId,
     cursor = null,
@@ -178,19 +345,47 @@ export async function fetchFeedPage(params: {
   } = params;
 
   if (requestedScope === "local" && !locationId) {
-    throw new Error("location_required_for_local_feed");
+    return {
+      ok: false,
+      error: makeError(
+        "VALIDATION_ERROR",
+        "Turn on location to view local jobs.",
+        false,
+        { location_id: "Location is required for the local feed." },
+      ),
+    };
   }
 
   const safeLimit = normalizeLimit(limit);
 
   const deviceHash = await getDeviceHash();
   if (!deviceHash) {
-    throw new Error("device_hash_unavailable");
+    return {
+      ok: false,
+      error: makeError(
+        "UNKNOWN_ERROR",
+        "We could not secure this request. Please reopen the app and try again.",
+        false,
+        { device_hash: "Device hash is unavailable." },
+      ),
+    };
   }
 
   const {
     data: { session },
+    error: sessionError,
   } = await supabase.auth.getSession();
+
+  if (sessionError) {
+    return {
+      ok: false,
+      error: makeError(
+        "SESSION_EXPIRED",
+        "We could not verify your session. Please reopen the app and try again.",
+        false,
+      ),
+    };
+  }
 
   const token = session?.access_token ?? null;
 
@@ -220,52 +415,87 @@ export async function fetchFeedPage(params: {
       }),
     );
   } catch (err) {
-    throw classifyFeedError(null, err instanceof Error ? err.message : String(err));
+    return {
+      ok: false,
+      error: classifyTransportError(err),
+    };
   }
 
-  let payload: FeedApiResponse | string | null = null;
-
+  let rawText = "";
   try {
-    payload = await res.json();
+    rawText = await res.text();
   } catch {
-    try {
-      payload = await res.text();
-    } catch {
-      payload = null;
+    rawText = "";
+  }
+
+  const parsedErrorPayload = rawText
+    ? tryParseJson<EdgeErrorPayload>(rawText)
+    : null;
+
+  const parsedSuccessPayload = rawText
+    ? tryParseJson<FeedApiResponse>(rawText)
+    : null;
+
+  if (!res.ok) {
+    const normalizedError = normalizeEdgeErrorPayload(parsedErrorPayload);
+
+    if (normalizedError) {
+      return { ok: false, error: normalizedError };
+    }
+
+    return {
+      ok: false,
+      error: makeError(
+        "UNKNOWN_ERROR",
+        "We could not load jobs right now. Please try again.",
+        res.status >= 500,
+      ),
+    };
+  }
+
+  const data = parsedSuccessPayload ?? {};
+
+  const jobs = Array.isArray(data.jobs)
+    ? data.jobs.filter(isValidFeedApiJob).map(mapJob)
+    : [];
+
+  const premium = normalizePremiumState(data.premium);
+
+  if (data.nextCursor !== undefined && data.nextCursor !== null) {
+    if (!isValidCursor(data.nextCursor)) {
+      return {
+        ok: false,
+        error: makeError(
+          "UNKNOWN_ERROR",
+          "The feed response was invalid.",
+          false,
+        ),
+      };
     }
   }
 
-  if (!res.ok) {
-    throw classifyFeedError(res.status, extractErrorMessage(payload));
+  if (jobs.length > 0 && data.nextCursor === undefined) {
+    return {
+      ok: false,
+      error: makeError(
+        "UNKNOWN_ERROR",
+        "The feed response was invalid.",
+        false,
+      ),
+    };
   }
-
-  const data =
-    payload && typeof payload === "object" ? (payload as FeedApiResponse) : {};
-
-  if (data.error) {
-    throw classifyFeedError(res.status, data.error);
-  }
-
-  const jobs = Array.isArray(data.jobs) ? data.jobs.map(mapJob) : [];
-  const serverCursor = data.nextCursor ?? null;
-  const last = jobs[jobs.length - 1];
 
   return {
-    jobs,
-    nextCursor:
-      serverCursor ??
-      (last
-        ? {
-            is_currently_sponsored: Boolean(last.is_currently_sponsored),
-            sponsored_until: last.sponsored_until ?? null,
-            created_at: last.created_at,
-            id: last.id,
-          }
-        : null),
-    premium: data.premium ?? null,
-    new_jobs_count:
-      typeof data.new_jobs_count === "number" && Number.isFinite(data.new_jobs_count)
-        ? data.new_jobs_count
-        : 0,
+    ok: true,
+    data: {
+      jobs,
+      nextCursor: data.nextCursor ?? null,
+      premium,
+      new_jobs_count:
+        typeof data.new_jobs_count === "number" &&
+        Number.isFinite(data.new_jobs_count)
+          ? Math.max(0, Math.trunc(data.new_jobs_count))
+          : 0,
+    },
   };
 }

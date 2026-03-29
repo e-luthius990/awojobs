@@ -8,6 +8,7 @@ export type ApplicationStatus =
 export interface Application {
   id: string;
   job_id: string;
+  employer_id: string;
   applicant_name: string;
   applicant_phone: string;
   source: string | null;

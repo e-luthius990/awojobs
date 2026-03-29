@@ -5,9 +5,14 @@ const APPLIED_KEY = "applied_job_ids";
 
 function safeParse(raw: string | null): string[] {
   if (!raw) return [];
+
   try {
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
+    return Array.isArray(parsed)
+      ? parsed.filter(
+          (v): v is string => typeof v === "string" && v.trim().length > 0,
+        )
+      : [];
   } catch {
     return [];
   }
@@ -16,15 +21,13 @@ function safeParse(raw: string | null): string[] {
 export function useAppliedJobs(jobId: string) {
   const [appliedIds, setAppliedIds] = useState<Set<string>>(new Set());
 
-  /* ---------------- INITIAL LOAD ---------------- */
   useEffect(() => {
     let mounted = true;
 
     AsyncStorage.getItem(APPLIED_KEY)
       .then((raw) => {
         if (!mounted) return;
-        const ids = safeParse(raw);
-        setAppliedIds(new Set(ids));
+        setAppliedIds(new Set(safeParse(raw)));
       })
       .catch(() => {
         if (!mounted) return;
@@ -36,30 +39,30 @@ export function useAppliedJobs(jobId: string) {
     };
   }, []);
 
-  /* ---------------- DERIVED STATE ---------------- */
   const applied = appliedIds.has(jobId);
 
-  /* ---------------- MARK APPLIED ---------------- */
-  const markApplied = useCallback(
-    async (id: string) => {
-      if (appliedIds.has(id)) return;
+  const markApplied = useCallback(async (id: string) => {
+    let didChange = false;
+    let nextIds: string[] = [];
 
-      const updated = new Set(appliedIds);
-      updated.add(id);
+    setAppliedIds((prev) => {
+      if (prev.has(id)) return prev;
 
-      setAppliedIds(updated);
+      const next = new Set(prev);
+      next.add(id);
+      nextIds = Array.from(next);
+      didChange = true;
+      return next;
+    });
 
-      try {
-        await AsyncStorage.setItem(
-          APPLIED_KEY,
-          JSON.stringify(Array.from(updated))
-        );
-      } catch {
-        // fail silently — DB is real truth
-      }
-    },
-    [appliedIds]
-  );
+    if (!didChange) return;
+
+    try {
+      await AsyncStorage.setItem(APPLIED_KEY, JSON.stringify(nextIds));
+    } catch {
+      // DB remains the real source of truth
+    }
+  }, []);
 
   return { applied, markApplied };
 }

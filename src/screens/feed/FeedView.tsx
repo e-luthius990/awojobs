@@ -64,8 +64,9 @@ type Props = {
   hasValidLocation: boolean;
   isNationalLocked: boolean;
   onOpenPremium: () => void;
-  onOpenLocation: () => void;
   hasEntered?: boolean;
+  locationRequired?: boolean;
+  onRetryLocation?: () => void;
 };
 
 function DailyPulseCard({ count }: { count: number }) {
@@ -104,7 +105,8 @@ function FeedViewComponent({
   hasValidLocation,
   isNationalLocked,
   onOpenPremium,
-  onOpenLocation,
+  locationRequired = false,
+  onRetryLocation,
 }: Props) {
   const { theme } = useTheme();
 
@@ -129,6 +131,7 @@ function FeedViewComponent({
       paddingTop: theme.spacing.sm,
       paddingBottom: theme.spacing.xxxl + theme.layout.bottomBarHeight,
       paddingHorizontal: theme.spacing.screenX,
+      flexGrow: 1,
     }),
     [
       theme.layout.bottomBarHeight,
@@ -154,13 +157,14 @@ function FeedViewComponent({
   const keyExtractor = useCallback((item: ListItem) => item.id, []);
 
   const handleEndReached = useCallback(() => {
+    if (locationRequired) return;
     if (!loading && !loadingMore && hasMore && onLoadMore) {
       onLoadMore();
     }
-  }, [loading, loadingMore, hasMore, onLoadMore]);
+  }, [locationRequired, loading, loadingMore, hasMore, onLoadMore]);
 
   const listFooter = useMemo(() => {
-    if (!loadingMore) {
+    if (locationRequired || !loadingMore) {
       return <View style={{ height: theme.spacing.md }} />;
     }
 
@@ -184,6 +188,7 @@ function FeedViewComponent({
       </View>
     );
   }, [
+    locationRequired,
     loadingMore,
     theme.colors.primary,
     theme.spacing.md,
@@ -193,6 +198,24 @@ function FeedViewComponent({
 
   const emptyBlock = useMemo(() => {
     if (!isEmpty) return null;
+
+    if (locationRequired) {
+      return (
+        <EmptyState
+          title="Turn on location to view jobs"
+          message="AwoJobs uses your device location to show nearby jobs. Enable location services and try again."
+          action={
+            onRetryLocation ? (
+              <AppButton
+                title="Retry"
+                onPress={onRetryLocation}
+                variant="primary"
+              />
+            ) : undefined
+          }
+        />
+      );
+    }
 
     if (error) {
       return (
@@ -212,22 +235,6 @@ function FeedViewComponent({
       );
     }
 
-    if (effectiveScope === "local" && !hasValidLocation) {
-      return (
-        <EmptyState
-          title="No local jobs yet"
-          message="Set your location to help AwoJobs show jobs closer to you."
-          action={
-            <AppButton
-              title="Choose Location"
-              onPress={onOpenLocation}
-              variant="primary"
-            />
-          }
-        />
-      );
-    }
-
     if (effectiveScope === "national") {
       return (
         <EmptyState
@@ -240,22 +247,20 @@ function FeedViewComponent({
     return (
       <EmptyState
         title="No jobs found"
-        message="We could not find jobs for this area right now. Try refreshing, changing location, or checking again later."
+        message="We could not find jobs near you right now. Try refreshing or check again later."
         action={
-          <AppButton
-            title="Change Location"
-            onPress={onOpenLocation}
-            variant="secondary"
-          />
+          refresh ? (
+            <AppButton title="Refresh" onPress={refresh} variant="secondary" />
+          ) : undefined
         }
       />
     );
   }, [
     effectiveScope,
     error,
-    hasValidLocation,
     isEmpty,
-    onOpenLocation,
+    locationRequired,
+    onRetryLocation,
     refresh,
   ]);
 
@@ -272,8 +277,12 @@ function FeedViewComponent({
       return "Showing jobs across Uganda.";
     }
 
-    return "Showing jobs near your selected location.";
-  }, [effectiveScope, isGuest, isNationalLocked]);
+    if (!hasValidLocation) {
+      return "Turn on location to see jobs near you.";
+    }
+
+    return "Showing jobs near your current location.";
+  }, [effectiveScope, hasValidLocation, isGuest, isNationalLocked]);
 
   const listHeader = useMemo(() => {
     return (
@@ -308,7 +317,7 @@ function FeedViewComponent({
           ) : null}
         </View>
 
-        {error && items.length > 0 ? (
+        {error && items.length > 0 && !locationRequired ? (
           <View style={{ marginBottom: theme.spacing.lg }}>
             <AppCard variant="muted" padding="md">
               <AppText variant="bodySm" tone="error">
@@ -352,7 +361,7 @@ function FeedViewComponent({
           </View>
         ) : null}
 
-        {dailyPulseCount > 0 && !showInitialSkeleton ? (
+        {dailyPulseCount > 0 && !showInitialSkeleton && !locationRequired ? (
           <View style={{ marginBottom: theme.spacing.lg }}>
             <DailyPulseCard count={dailyPulseCount} />
           </View>
@@ -362,10 +371,10 @@ function FeedViewComponent({
   }, [
     dailyPulseCount,
     error,
-    effectiveScope,
     isGuest,
     isNationalLocked,
     items.length,
+    locationRequired,
     onOpenPremium,
     requestedScope,
     scopeHelpText,

@@ -178,6 +178,10 @@ const { data: createdUser, error: createError } =
     user_metadata: {
       phone_number: normalized,
       full_name: otpRow.full_name,
+      business_name:
+        otpRow.role === "employer" && typeof otpRow.business_name === "string"
+          ? otpRow.business_name.trim() || null
+          : null,
       role: otpRow.role ?? "job_seeker",
     },
   });

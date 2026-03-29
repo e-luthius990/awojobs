@@ -27,6 +27,8 @@ type RecentJob = {
 };
 
 type DashboardData = {
+  full_name: string | null;
+  phone_number: string | null;
   active_jobs: number;
   pending_jobs: number;
   expired_jobs: number;
@@ -298,10 +300,12 @@ export default function EmployerDashboardScreen({ navigation }: any) {
         <AppEntrance delay={0}>
           <AppCard variant="elevated" padding="lg">
             <View style={heroWrapStyle}>
-              <StatusBadge label="Overview" tone="info" />
-              <AppText variant="h3">Welcome back</AppText>
+              <AppText variant="h3">
+                {data?.full_name?.trim() || "Employer"}
+              </AppText>
+
               <AppText variant="bodySm" tone="secondary">
-                Here’s what’s happening with your jobs and applicants today.
+                {data?.phone_number?.trim() || "No phone number available"}
               </AppText>
             </View>
           </AppCard>

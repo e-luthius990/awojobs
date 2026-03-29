@@ -22,10 +22,12 @@ import { InlineAlert } from "../../ui/InlineAlert";
 import { EmptyState } from "../../ui/EmptyState";
 import { SkeletonCard } from "../../ui/Skeleton";
 
+type UserRole = "employer" | "job_seeker" | "moderator" | "super_admin";
+
 type ModeratorUser = {
   id: string;
   full_name: string | null;
-  role: string | null;
+  role: UserRole | null;
   trust_score: number | null;
   is_suspended: boolean | null;
   created_at: string;
@@ -51,10 +53,19 @@ export default function ModeratorUsersScreen() {
         .order("created_at", { ascending: false })
         .limit(100);
 
-      if (error) throw error;
+      if (error) {
+        console.error("ModeratorUsersScreen load failed", {
+          message: error.message,
+          details: error.details,
+          hint: error.hint,
+          code: error.code,
+        });
+        throw error;
+      }
+
       setUsers((data ?? []) as ModeratorUser[]);
-    } catch {
-      setError("Failed to load users.");
+    } catch (err: any) {
+      setError(err?.message || "Failed to load users.");
       if (!silent) setUsers([]);
     } finally {
       if (!silent) setLoading(false);
@@ -73,18 +84,36 @@ export default function ModeratorUsersScreen() {
 
       const next = !Boolean(user.is_suspended);
 
-      const { error } = await supabase
+      const { data, error } = await supabase
         .from("profiles")
         .update({ is_suspended: next })
-        .eq("id", user.id);
+        .eq("id", user.id)
+        .select("id,is_suspended")
+        .maybeSingle();
 
-      if (error) throw error;
+      if (error) {
+        console.error("toggleSuspend failed", {
+          userId: user.id,
+          next,
+          message: error.message,
+          details: error.details,
+          hint: error.hint,
+          code: error.code,
+        });
+        throw error;
+      }
+
+      if (!data) {
+        throw new Error("User not updated");
+      }
 
       setUsers((prev) =>
-        prev.map((u) => (u.id === user.id ? { ...u, is_suspended: next } : u)),
+        prev.map((u) =>
+          u.id === user.id ? { ...u, is_suspended: data.is_suspended } : u,
+        ),
       );
-    } catch {
-      setError("Failed to update user.");
+    } catch (err: any) {
+      setError(err?.message || "Failed to update user.");
     } finally {
       setActionLoadingId(null);
     }
@@ -197,6 +226,7 @@ function UserCard({
   const { theme } = useTheme();
 
   const suspended = Boolean(item.is_suspended);
+  const isSuperAdmin = item.role === "super_admin";
 
   return (
     <View style={{ marginBottom: theme.spacing.sm }}>
@@ -220,13 +250,17 @@ function UserCard({
 
           <View style={{ marginTop: theme.spacing.xs }}>
             <AppButton
-              title={suspended ? "Unsuspend" : "Suspend"}
+              title={
+                isSuperAdmin ? "Protected" : suspended ? "Unsuspend" : "Suspend"
+              }
               onPress={onToggleSuspend}
               loading={busy}
-              disabled={busy}
+              disabled={busy || isSuperAdmin}
               size="sm"
               fullWidth={false}
-              variant={suspended ? "secondary" : "destructive"}
+              variant={
+                isSuperAdmin ? "ghost" : suspended ? "secondary" : "destructive"
+              }
             />
           </View>
         </View>

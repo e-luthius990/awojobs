@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   CompositeNavigationProp,
   useNavigation,
@@ -27,13 +27,16 @@ export default function FeedScreen() {
   const { session } = useSession();
   const isGuest = !session;
 
-  const { locationId, loading: locationLoading } = useResolvedLocation();
+  const {
+    locationId,
+    loading: locationLoading,
+    retry: retryResolveLocation,
+    permissionDenied,
+  } = useResolvedLocation();
+
   const hasValidLocation = Boolean(locationId);
 
-  const [requestedScope, setRequestedScope] =
-    React.useState<FeedScope>("local");
-
-  const provisionalScope: FeedScope = isGuest ? "local" : requestedScope;
+  const [requestedScope, setRequestedScope] = useState<FeedScope>("local");
 
   const {
     jobs,
@@ -46,24 +49,41 @@ export default function FeedScreen() {
     new_jobs_count,
     error,
     refreshing,
-  } = useEdgeFeed(hasValidLocation ? locationId : null, provisionalScope);
+  } = useEdgeFeed(hasValidLocation ? locationId : null, requestedScope);
 
-  const isPremium = Boolean(premium);
-  const effectiveScope: FeedScope =
-    isGuest || (requestedScope === "national" && !isPremium)
-      ? "local"
-      : requestedScope;
+  const isPremium = premium?.active === true;
 
-  const isNationalLocked = !isGuest && !isPremium;
-  const items = jobs ?? [];
-  const dailyPulseCount = useDailyPulse(new_jobs_count ?? 0);
+  const effectiveScope: FeedScope = useMemo(() => {
+    if (isGuest) return "local";
+    if (requestedScope === "national" && !isPremium) {
+      return "local";
+    }
+    return requestedScope;
+  }, [isGuest, requestedScope, isPremium]);
 
-  const isInitialLoading = locationLoading || feedLoading;
-  const hasEntered = !isInitialLoading;
+  useEffect(() => {
+    if (requestedScope === "national" && (isGuest || !isPremium)) {
+      setRequestedScope("local");
+    }
+  }, [requestedScope, isGuest, isPremium]);
 
+  const requiresLocation = effectiveScope === "local";
   const canUseNational = !isGuest && isPremium;
-  const canRefresh = effectiveScope === "national" || hasValidLocation;
-  const canPaginate = effectiveScope === "national" || hasValidLocation;
+  const isNationalLocked = !isGuest && !isPremium;
+
+  const canFetchFeed = !requiresLocation || hasValidLocation;
+  const showLocationRequired =
+    !locationLoading && requiresLocation && !hasValidLocation;
+
+  const isInitialLoading = locationLoading || (canFetchFeed && feedLoading);
+
+  const hasEntered = !locationLoading;
+  const dailyPulseCount = useDailyPulse(
+    showLocationRequired ? 0 : (new_jobs_count ?? 0),
+  );
+
+  const canRefresh = !requiresLocation || hasValidLocation;
+  const canPaginate = !requiresLocation || hasValidLocation;
 
   const handleSetScope = useCallback(
     (scope: FeedScope) => {
@@ -80,10 +100,6 @@ export default function FeedScreen() {
     navigation.navigate("Premium");
   }, [navigation]);
 
-  const handleOpenLocation = useCallback(() => {
-    navigation.navigate("ManualLocation");
-  }, [navigation]);
-
   const handleLoadMore = useCallback(() => {
     if (!canPaginate || isInitialLoading || loadingMore || !hasMore) {
       return;
@@ -93,36 +109,55 @@ export default function FeedScreen() {
   }, [canPaginate, hasMore, isInitialLoading, loadMore, loadingMore]);
 
   const handleRefresh = useCallback(() => {
+    if (showLocationRequired) {
+      void retryResolveLocation();
+      return;
+    }
+
     if (!canRefresh || locationLoading || refreshing) {
       return;
     }
 
     void refresh();
-  }, [canRefresh, locationLoading, refresh, refreshing]);
+  }, [
+    showLocationRequired,
+    retryResolveLocation,
+    canRefresh,
+    locationLoading,
+    refreshing,
+    refresh,
+  ]);
 
   return (
     <FeedView
       navigation={navigation}
-      items={items}
+      items={showLocationRequired ? [] : jobs}
       loading={isInitialLoading}
-      loadingMore={loadingMore}
-      hasMore={hasMore}
+      loadingMore={showLocationRequired ? false : loadingMore}
+      hasMore={showLocationRequired ? false : hasMore}
       onLoadMore={handleLoadMore}
       refresh={handleRefresh}
       premium={premium}
       requestedScope={requestedScope}
       effectiveScope={effectiveScope}
       setRequestedScope={handleSetScope}
-      dailyPulseCount={dailyPulseCount}
+      dailyPulseCount={showLocationRequired ? 0 : dailyPulseCount}
       isGuest={isGuest}
       isPremium={isPremium}
       hasValidLocation={hasValidLocation}
       isNationalLocked={isNationalLocked}
       onOpenPremium={handleOpenPremium}
-      onOpenLocation={handleOpenLocation}
       hasEntered={hasEntered}
-      error={error}
+      error={
+        showLocationRequired
+          ? permissionDenied
+            ? "Turn on location to view jobs. Permission is off."
+            : "Turn on location to view jobs."
+          : error
+      }
       refreshing={refreshing}
+      locationRequired={showLocationRequired}
+      onRetryLocation={retryResolveLocation}
     />
   );
 }

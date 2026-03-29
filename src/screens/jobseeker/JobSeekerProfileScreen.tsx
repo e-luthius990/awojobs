@@ -1,7 +1,17 @@
-import React, { useCallback, useMemo, type ViewStyle } from "react";
-import { ActivityIndicator, Alert, View } from "react-native";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ViewStyle,
+} from "react";
+import { Alert, Linking, Switch, View } from "react-native";
 
-import { logout as logoutUser } from "../../auth/auth.service";
+import { supabase } from "../../core/supabase";
+import {
+  logout as logoutUser,
+  deleteJobSeekerAccount,
+} from "../../auth/auth.service";
 import { useSession } from "../../state/useSession";
 import { useProfile } from "../../state/useProfile";
 import { useTheme } from "../../theme/useTheme";
@@ -14,41 +24,38 @@ import { AppText } from "../../ui/AppText";
 import { EmptyState } from "../../ui/EmptyState";
 import { InlineAlert } from "../../ui/InlineAlert";
 import { StatusBadge } from "../../ui/StatusBadge";
+import { SkeletonCard } from "../../ui/Skeleton";
+import ConfirmPasswordModal from "../../ui/account/ConfirmPasswordModal";
 
-/* =====================================================
-   SCREEN
-===================================================== */
+const TERMS_URL = "https://awojobs.com/terms";
 
-export default function JobSeekerProfileScreen({ navigation }: any) {
-  const { theme } = useTheme();
+export default function JobSeekerProfileScreen() {
+  const { theme, isDark, toggleTheme } = useTheme();
 
   const { session, loading: sessionLoading } = useSession();
   const userId = session?.user?.id ?? null;
 
   const { profile, loading: profileLoading } = useProfile(userId);
 
+  const [notificationsEnabled, setNotificationsEnabled] = useState(false);
+  const [savingNotifications, setSavingNotifications] = useState(false);
+  const [deletingAccount, setDeletingAccount] = useState(false);
+  const [confirmDeleteVisible, setConfirmDeleteVisible] = useState(false);
+  const [accountActionError, setAccountActionError] = useState<string | null>(
+    null,
+  );
+
   const isLoading = sessionLoading || profileLoading;
 
-  const phoneValue =
-    profile && "phone_number" in profile
-      ? (profile.phone_number ?? "—")
-      : profile && "phone" in profile
-        ? ((profile as { phone?: string | null }).phone ?? "—")
-        : "—";
+  useEffect(() => {
+    if (!profile) return;
 
-  const isPremium =
-    profile && "is_premium" in profile
-      ? (profile as { is_premium?: boolean | null }).is_premium === true
-      : false;
-
-  const loaderWrapStyle = useMemo<ViewStyle>(
-    () => ({
-      alignItems: "center",
-      justifyContent: "center",
-      gap: theme.spacing.md,
-    }),
-    [theme.spacing.md],
-  );
+    setNotificationsEnabled(
+      "push_opt_in" in profile && typeof profile.push_opt_in === "boolean"
+        ? profile.push_opt_in
+        : false,
+    );
+  }, [profile]);
 
   const sectionGapStyle = useMemo<ViewStyle>(
     () => ({
@@ -68,7 +75,7 @@ export default function JobSeekerProfileScreen({ navigation }: any) {
   const topRowStyle = useMemo<ViewStyle>(
     () => ({
       flexDirection: "row",
-      alignItems: "center",
+      alignItems: "flex-start",
       justifyContent: "space-between",
       gap: theme.spacing.sm,
     }),
@@ -83,7 +90,41 @@ export default function JobSeekerProfileScreen({ navigation }: any) {
     [theme.spacing.xs],
   );
 
+  const settingsWrapStyle = useMemo<ViewStyle>(
+    () => ({
+      gap: theme.spacing.md,
+    }),
+    [theme.spacing.md],
+  );
+
+  const settingRowStyle = useMemo<ViewStyle>(
+    () => ({
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: theme.spacing.md,
+    }),
+    [theme.spacing.md],
+  );
+
+  const settingTextWrapStyle = useMemo<ViewStyle>(
+    () => ({
+      flex: 1,
+      gap: theme.spacing.xs,
+    }),
+    [theme.spacing.xs],
+  );
+
+  const accountActionsStyle = useMemo<ViewStyle>(
+    () => ({
+      gap: theme.spacing.sm,
+    }),
+    [theme.spacing.sm],
+  );
+
   const handleLogout = useCallback(() => {
+    if (deletingAccount || confirmDeleteVisible) return;
+
     Alert.alert("Logout", "Are you sure you want to logout?", [
       { text: "Cancel", style: "cancel" },
       {
@@ -98,7 +139,7 @@ export default function JobSeekerProfileScreen({ navigation }: any) {
         },
       },
     ]);
-  }, []);
+  }, [confirmDeleteVisible, deletingAccount]);
 
   const handleRelogin = useCallback(async () => {
     try {
@@ -108,18 +149,115 @@ export default function JobSeekerProfileScreen({ navigation }: any) {
     }
   }, []);
 
-  const handleUpgradePremium = useCallback(() => {
-    navigation.navigate("Premium");
-  }, [navigation]);
+  const handleToggleNotifications = useCallback(async () => {
+    if (
+      !userId ||
+      savingNotifications ||
+      deletingAccount ||
+      confirmDeleteVisible
+    ) {
+      return;
+    }
+
+    const nextValue = !notificationsEnabled;
+    setNotificationsEnabled(nextValue);
+    setSavingNotifications(true);
+
+    try {
+      const { error } = await supabase
+        .from("profiles")
+        .update({ push_opt_in: nextValue })
+        .eq("id", userId);
+
+      if (error) throw error;
+    } catch {
+      setNotificationsEnabled(!nextValue);
+      Alert.alert("Update failed", "Could not update notification settings.");
+    } finally {
+      setSavingNotifications(false);
+    }
+  }, [
+    confirmDeleteVisible,
+    deletingAccount,
+    notificationsEnabled,
+    savingNotifications,
+    userId,
+  ]);
+
+  const handleOpenTerms = useCallback(async () => {
+    try {
+      const supported = await Linking.canOpenURL(TERMS_URL);
+      if (!supported) {
+        Alert.alert("Unavailable", "Could not open the terms page.");
+        return;
+      }
+
+      await Linking.openURL(TERMS_URL);
+    } catch {
+      Alert.alert("Unavailable", "Could not open the terms page.");
+    }
+  }, []);
+
+  const runDeleteAccount = useCallback(async () => {
+    try {
+      setDeletingAccount(true);
+      setAccountActionError(null);
+
+      const result = await deleteJobSeekerAccount();
+
+      if (result.action !== "deleted") {
+        throw new Error("Unable to delete account.");
+      }
+
+      Alert.alert(
+        "Account deleted",
+        "Your account has been permanently removed.",
+      );
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Unable to delete account right now.";
+
+      setAccountActionError(message);
+      Alert.alert("Unable to delete account", message);
+    } finally {
+      setDeletingAccount(false);
+    }
+  }, []);
+
+  const handleConfirmedDelete = useCallback(() => {
+    setConfirmDeleteVisible(false);
+
+    Alert.alert(
+      "Delete account",
+      "This permanently removes your account and clears your job seeker data. This action cannot be undone.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete account",
+          style: "destructive",
+          onPress: () => {
+            void runDeleteAccount();
+          },
+        },
+      ],
+    );
+  }, [runDeleteAccount]);
+
+  const handleDeleteAccount = useCallback(() => {
+    if (deletingAccount) return;
+    setConfirmDeleteVisible(true);
+  }, [deletingAccount]);
 
   if (isLoading) {
     return (
-      <AppScreen centerContent>
-        <View style={loaderWrapStyle}>
-          <ActivityIndicator size="large" color={theme.colors.primary} />
-          <AppText variant="bodySm" tone="secondary">
-            Loading your profile…
-          </AppText>
+      <AppScreen scroll>
+        <View style={{ gap: theme.spacing.md }}>
+          <AppHeader title="My Profile" />
+          <SkeletonCard lines={3} />
+          <SkeletonCard lines={2} />
+          <SkeletonCard lines={2} />
         </View>
       </AppScreen>
     );
@@ -130,7 +268,7 @@ export default function JobSeekerProfileScreen({ navigation }: any) {
       <AppScreen centerContent>
         <EmptyState
           title="Profile unavailable"
-          message="We couldn’t load your account details."
+          message="We could not load your account details."
           action={
             <AppButton
               title="Re-login"
@@ -143,89 +281,156 @@ export default function JobSeekerProfileScreen({ navigation }: any) {
     );
   }
 
+  const phoneValue =
+    typeof profile.phone_number === "string" && profile.phone_number.trim()
+      ? profile.phone_number.trim()
+      : "—";
+
+  const fullNameValue =
+    typeof profile.full_name === "string" && profile.full_name.trim()
+      ? profile.full_name.trim()
+      : "Unnamed user";
+
+  const roleValue =
+    typeof profile.role === "string" && profile.role.trim()
+      ? profile.role.trim().replace(/_/g, " ").toUpperCase()
+      : "—";
+
   return (
     <AppScreen scroll>
       <View style={sectionGapStyle}>
         <AppHeader
           title="My Profile"
-          subtitle="Manage your account and premium access"
+          subtitle="Manage your account and preferences"
         />
 
         <AppCard variant="elevated" padding="lg">
           <View style={cardGapStyle}>
             <View style={topRowStyle}>
               <View style={topTextStyle}>
-                <AppText variant="h3">
-                  {profile.full_name || "Unnamed user"}
-                </AppText>
-                <AppText variant="bodySm" tone="secondary">
-                  {phoneValue}
-                </AppText>
+                <AppText variant="h3">{fullNameValue}</AppText>
               </View>
 
-              <StatusBadge
-                label={isPremium ? "Premium" : "Free"}
-                tone={isPremium ? "premium" : "default"}
-              />
+              <StatusBadge label={roleValue} tone="info" />
             </View>
 
             <View style={cardGapStyle}>
-              <ProfileRow label="Full Name" value={profile.full_name || "—"} />
-              <ProfileRow label="Phone" value={phoneValue} />
-              <ProfileRow label="Role" value={profile.role || "—"} />
+              <ProfileRow label="Phone Number" value={phoneValue} />
             </View>
-          </View>
-        </AppCard>
-
-        <AppCard variant={isPremium ? "premium" : "default"} padding="lg">
-          <View style={cardGapStyle}>
-            <View style={topTextStyle}>
-              <AppText variant="titleLg">
-                {isPremium ? "Premium Active" : "Free Account"}
-              </AppText>
-
-              <AppText variant="bodySm" tone="secondary">
-                {isPremium
-                  ? "You can access national jobs across Uganda."
-                  : "Upgrade to Premium to unlock national jobs and broader discovery."}
-              </AppText>
-            </View>
-
-            {isPremium ? (
-              <InlineAlert
-                tone="success"
-                title="National access enabled"
-                message="Your account can browse jobs beyond your local area."
-              />
-            ) : (
-              <AppButton
-                title="Upgrade to Premium"
-                onPress={handleUpgradePremium}
-                variant="primary"
-              />
-            )}
           </View>
         </AppCard>
 
         <AppCard variant="default" padding="lg">
-          <View style={cardGapStyle}>
-            <AppText variant="title">Account Actions</AppText>
+          <View style={settingsWrapStyle}>
+            <AppText variant="titleLg">Preferences</AppText>
+
+            <View style={settingRowStyle}>
+              <View style={settingTextWrapStyle}>
+                <AppText variant="title">Theme</AppText>
+                <AppText variant="bodySm" tone="secondary">
+                  {isDark ? "Dark mode is enabled." : "Light mode is enabled."}
+                </AppText>
+              </View>
+
+              <Switch
+                value={Boolean(isDark)}
+                onValueChange={() => {
+                  void toggleTheme();
+                }}
+                trackColor={{
+                  false: theme.colors.borderMuted,
+                  true: theme.colors.primary,
+                }}
+                thumbColor={theme.colors.bgSurfaceElevated}
+              />
+            </View>
+
+            <View style={settingRowStyle}>
+              <View style={settingTextWrapStyle}>
+                <AppText variant="title">Notifications</AppText>
+                <AppText variant="bodySm" tone="secondary">
+                  {notificationsEnabled
+                    ? "Job and application notifications are enabled."
+                    : "Job and application notifications are turned off."}
+                </AppText>
+              </View>
+
+              <Switch
+                value={notificationsEnabled}
+                onValueChange={() => {
+                  void handleToggleNotifications();
+                }}
+                disabled={
+                  savingNotifications || deletingAccount || confirmDeleteVisible
+                }
+                trackColor={{
+                  false: theme.colors.borderMuted,
+                  true: theme.colors.primary,
+                }}
+                thumbColor={theme.colors.bgSurfaceElevated}
+              />
+            </View>
+
+            <AppButton
+              title="Terms"
+              onPress={() => {
+                void handleOpenTerms();
+              }}
+              variant="secondary"
+              disabled={deletingAccount || confirmDeleteVisible}
+            />
+          </View>
+        </AppCard>
+
+        <AppCard variant="default" padding="lg">
+          <View style={accountActionsStyle}>
+            <AppText variant="titleLg">Account actions</AppText>
+
+            <AppText variant="bodySm" tone="secondary">
+              Deleting your account permanently removes your job seeker access
+              and clears your account data.
+            </AppText>
+
+            {accountActionError ? (
+              <InlineAlert
+                tone="error"
+                title="Action failed"
+                message={accountActionError}
+              />
+            ) : null}
+
+            <AppButton
+              title={deletingAccount ? "Deleting account..." : "Delete account"}
+              onPress={handleDeleteAccount}
+              variant="destructive"
+              disabled={
+                deletingAccount || savingNotifications || confirmDeleteVisible
+              }
+            />
 
             <AppButton
               title="Logout"
               onPress={handleLogout}
-              variant="destructive"
+              variant="secondary"
+              disabled={deletingAccount || confirmDeleteVisible}
             />
           </View>
         </AppCard>
       </View>
+
+      <ConfirmPasswordModal
+        visible={confirmDeleteVisible}
+        phoneNumber={profile.phone_number ?? null}
+        title="Confirm password"
+        message="Enter your password to continue with account deletion."
+        confirmLabel="Continue"
+        busyLabel="Checking..."
+        onCancel={() => setConfirmDeleteVisible(false)}
+        onSuccess={handleConfirmedDelete}
+      />
     </AppScreen>
   );
 }
-
-/* =====================================================
-   SUPPORT
-===================================================== */
 
 function ProfileRow({ label, value }: { label: string; value: string }) {
   return (

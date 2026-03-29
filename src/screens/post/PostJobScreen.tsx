@@ -10,7 +10,6 @@ import { View } from "react-native";
 import { supabase } from "../../core/supabase";
 import { resolveLocation } from "../../location/location.service";
 import { updateJob } from "../../jobs/jobs.update";
-import { Job } from "../../jobs/jobs.types";
 import { PostingSuccessPrompt } from "../../ui/components/PostingSuccessPrompt";
 
 import { useTheme } from "../../theme/useTheme";
@@ -26,9 +25,29 @@ import { InlineAlert } from "../../ui/InlineAlert";
 type ContactMethod = "call" | "whatsapp" | "walk_in" | "in_app";
 type PayType = "daily" | "weekly" | "monthly" | "not_specified";
 
+type EditingJob = {
+  id?: string;
+  title?: string | null;
+  description?: string | null;
+  pay_type?: PayType | null;
+  contact_method?: ContactMethod | null;
+  contact_phone?: string | null;
+  location_id?: string | null;
+  district?: string | null;
+  town?: string | null;
+  sub_county?: string | null;
+  location_name?: string | null;
+};
+
 type Props = {
   navigation: any;
-  route: any;
+  route: {
+    params?: {
+      job?: EditingJob;
+      jobId?: string;
+      mode?: "create" | "edit" | "renew";
+    };
+  };
 };
 
 function formatLocationName(loc: {
@@ -78,6 +97,7 @@ export default function PostJobScreen({ navigation, route }: Props) {
 
   const isEdit = mode === "edit";
   const isRenew = mode === "renew";
+  const isCreate = !isEdit && !isRenew;
 
   const [locationId, setLocationId] = useState<string | null>(null);
   const [locationName, setLocationName] = useState<string | null>(null);
@@ -93,7 +113,7 @@ export default function PostJobScreen({ navigation, route }: Props) {
   const [phone, setPhone] = useState(editingJob?.contact_phone ?? "");
 
   const [loading, setLoading] = useState(false);
-  const [postedJob, setPostedJob] = useState<Job | null>(null);
+  const [postedJob, setPostedJob] = useState<any | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const fieldDisabled = isRenew;
@@ -120,7 +140,13 @@ export default function PostJobScreen({ navigation, route }: Props) {
 
       try {
         const loc = await resolveLocation();
-        if (!active || !loc?.location_id) return;
+        if (!active) return;
+
+        if (!loc?.location_id) {
+          setLocationId(null);
+          setLocationName(null);
+          return;
+        }
 
         setLocationId(loc.location_id);
         setLocationName(
@@ -132,6 +158,8 @@ export default function PostJobScreen({ navigation, route }: Props) {
         );
       } catch {
         if (!active) return;
+        setLocationId(null);
+        setLocationName(null);
       }
     };
 
@@ -151,9 +179,12 @@ export default function PostJobScreen({ navigation, route }: Props) {
       .from("profiles")
       .select("phone_number")
       .single()
-      .then(({ data }) => {
-        if (!active) return;
-        if (data?.phone_number) {
+      .then(({ data, error: profileError }) => {
+        if (!active || profileError) return;
+        if (
+          typeof data?.phone_number === "string" &&
+          data.phone_number.trim()
+        ) {
           setPhone(data.phone_number);
         }
       })
@@ -209,16 +240,27 @@ export default function PostJobScreen({ navigation, route }: Props) {
 
   const validateBeforeSubmit = useCallback(() => {
     if (!locationId) {
-      setError("Location is required.");
+      setError("Turn on location to continue posting this job.");
       return false;
     }
 
-    if (title.trim().length < 4) {
+    if (!isRenew && title.trim().length < 4) {
       setError("Job title must be at least 4 characters.");
       return false;
     }
 
     if (
+      !isRenew &&
+      contactMethod !== "walk_in" &&
+      contactMethod !== "in_app" &&
+      !phone.trim()
+    ) {
+      setError("Contact phone is required.");
+      return false;
+    }
+
+    if (
+      !isRenew &&
       contactMethod !== "walk_in" &&
       contactMethod !== "in_app" &&
       !isValidUgPhone(phone)
@@ -229,40 +271,14 @@ export default function PostJobScreen({ navigation, route }: Props) {
 
     setError(null);
     return true;
-  }, [contactMethod, locationId, phone, title]);
-
-  const checkActiveLimit = useCallback(async (): Promise<boolean> => {
-    const {
-      data: { user },
-      error: userError,
-    } = await supabase.auth.getUser();
-
-    if (userError || !user) {
-      setError("You must be signed in.");
-      return false;
-    }
-
-    const { count, error } = await supabase
-      .from("jobs")
-      .select("id", { count: "exact", head: true })
-      .eq("employer_id", user.id)
-      .eq("status", "active");
-
-    if (error) {
-      setError("Could not verify active jobs.");
-      return false;
-    }
-
-    if ((count ?? 0) >= 10) {
-      setError("You already have 10 active jobs. Close one before posting.");
-      return false;
-    }
-
-    return true;
-  }, []);
+  }, [contactMethod, isRenew, locationId, phone, title]);
 
   const submitEdit = useCallback(async () => {
-    if (!jobId) return;
+    if (!jobId) {
+      setError("Missing job id.");
+      return;
+    }
+
     if (!validateBeforeSubmit()) return;
 
     setLoading(true);
@@ -296,16 +312,30 @@ export default function PostJobScreen({ navigation, route }: Props) {
     validateBeforeSubmit,
   ]);
 
-  const continueFlow = useCallback(async () => {
-    if (isEdit && jobId) {
-      await submitEdit();
+  const submitRenew = useCallback(async () => {
+    if (!jobId) {
+      setError("Missing job id.");
       return;
     }
 
-    if (!validateBeforeSubmit()) return;
+    setLoading(true);
+    setError(null);
 
-    const allowed = await checkActiveLimit();
-    if (!allowed) return;
+    try {
+      navigation.navigate("Payment", {
+        draftId: jobId,
+        mode: "renew",
+        jobId,
+      });
+    } catch (e: any) {
+      setError(e?.message ?? "Could not start renewal.");
+    } finally {
+      setLoading(false);
+    }
+  }, [jobId, navigation]);
+
+  const submitCreate = useCallback(async () => {
+    if (!validateBeforeSubmit()) return;
 
     setLoading(true);
     setError(null);
@@ -321,44 +351,55 @@ export default function PostJobScreen({ navigation, route }: Props) {
             ? null
             : normalizePhone(phone),
         location_id: locationId,
+        status: "draft" as const,
       };
 
-      const { data, error } = await supabase
+      const { data, error: insertError } = await supabase
         .from("jobs")
-        .insert({
-          ...draftPayload,
-          status: "draft",
-        })
+        .insert(draftPayload)
         .select()
         .single();
 
-      if (error || !data) {
-        throw error ?? new Error("Could not create draft.");
+      if (insertError || !data) {
+        throw insertError ?? new Error("Could not create draft.");
       }
 
       navigation.navigate("Payment", {
         draftId: data.id,
         mode: "create",
+        jobId: data.id,
       });
-    } catch {
-      setError("Could not create draft.");
+    } catch (e: any) {
+      setError(e?.message ?? "Could not create draft.");
     } finally {
       setLoading(false);
     }
   }, [
-    checkActiveLimit,
     contactMethod,
     description,
-    isEdit,
-    jobId,
     locationId,
     navigation,
     payType,
     phone,
-    submitEdit,
     title,
     validateBeforeSubmit,
   ]);
+
+  const continueFlow = useCallback(async () => {
+    if (loading) return;
+
+    if (isEdit) {
+      await submitEdit();
+      return;
+    }
+
+    if (isRenew) {
+      await submitRenew();
+      return;
+    }
+
+    await submitCreate();
+  }, [isEdit, isRenew, loading, submitCreate, submitEdit, submitRenew]);
 
   if (postedJob) {
     return (
@@ -388,6 +429,14 @@ export default function PostJobScreen({ navigation, route }: Props) {
             tone="info"
             title="Posting location"
             message={`This job will be posted in ${locationName}.`}
+          />
+        ) : null}
+
+        {!locationId && isCreate ? (
+          <InlineAlert
+            tone="warning"
+            title="Location required"
+            message="Turn on location to continue posting this job."
           />
         ) : null}
 
@@ -516,7 +565,7 @@ export default function PostJobScreen({ navigation, route }: Props) {
           title={isEdit ? "Save Changes" : "Continue to Payment"}
           onPress={continueFlow}
           loading={loading}
-          disabled={loading}
+          disabled={loading || (isCreate && !locationId)}
           variant="primary"
         />
 

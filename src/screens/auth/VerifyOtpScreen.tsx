@@ -1,9 +1,9 @@
 import React, {
-  useState,
-  useRef,
-  useEffect,
   useCallback,
+  useEffect,
   useMemo,
+  useRef,
+  useState,
 } from "react";
 import {
   View,
@@ -15,15 +15,24 @@ import {
   Platform,
   ScrollView,
   Image,
-  type ViewStyle,
+  StyleSheet,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { useRoute, useNavigation } from "@react-navigation/native";
+import {
+  useRoute,
+  useNavigation,
+  type RouteProp,
+} from "@react-navigation/native";
+import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
+
 import {
   verifyRegistrationOtp,
   resendRegistrationOtp,
 } from "../../auth/auth.service";
-import { consumePendingIntent } from "../../intent/intent.store";
+import {
+  peekPendingIntent,
+  clearPendingIntent,
+} from "../../intent/intent.store";
 
 import { useTheme } from "../../theme/useTheme";
 import { AppScreen } from "../../ui/AppScreen";
@@ -31,21 +40,54 @@ import { AppText } from "../../ui/AppText";
 import { AppButton } from "../../ui/AppButton";
 import { InlineAlert } from "../../ui/InlineAlert";
 import { AppEntrance } from "../../ui/AppEntrance";
+import type { AuthStackParamList } from "../../navigation/AuthNavigator";
+import type { RootStackParamList } from "../../navigation/RootNavigator";
 
 const OTP_LENGTH = 6;
 const RESEND_SECONDS = 60;
 
+type VerifyOtpScreenRouteProp = RouteProp<AuthStackParamList, "VerifyOtp">;
+type VerifyOtpScreenNavigationProp = NativeStackNavigationProp<
+  AuthStackParamList,
+  "VerifyOtp"
+>;
+type RootNavigationProp = NativeStackNavigationProp<RootStackParamList>;
+
+function normalizeUgandaPhone(value: string): string {
+  const cleaned = value.replace(/\D/g, "");
+
+  if (cleaned.startsWith("256") && cleaned.length === 12) {
+    return `+${cleaned}`;
+  }
+
+  if (cleaned.startsWith("0") && cleaned.length === 10) {
+    return `+256${cleaned.slice(1)}`;
+  }
+
+  if (cleaned.startsWith("7") && cleaned.length === 9) {
+    return `+256${cleaned}`;
+  }
+
+  throw new Error("Enter a valid Uganda phone number.");
+}
+
+function maskUgandaPhone(phone: string): string {
+  const normalized = normalizeUgandaPhone(phone);
+  const cleaned = normalized.replace(/\D/g, "");
+
+  return `+${cleaned.slice(0, 5)}****${cleaned.slice(-2)}`;
+}
+
 export default function VerifyOtpScreen() {
-  const route = useRoute<any>();
-  const navigation = useNavigation<any>();
+  const route = useRoute<VerifyOtpScreenRouteProp>();
+  const navigation = useNavigation<VerifyOtpScreenNavigationProp>();
+  const rootNavigation = useNavigation<RootNavigationProp>();
   const { theme } = useTheme();
 
-  const phone = route.params?.phone as string | undefined;
-  const password = route.params?.password as string | undefined;
-  const intent = route.params?.intent as
-    | "premium_upgrade"
-    | "post_job"
-    | undefined;
+  const { phone, password, intent, role } = route.params;
+
+  const canonicalPhone = useMemo(() => normalizeUgandaPhone(phone), [phone]);
+  const maskedPhone = useMemo(() => maskUgandaPhone(phone), [phone]);
 
   const [otp, setOtp] = useState("");
   const [loading, setLoading] = useState(false);
@@ -56,11 +98,7 @@ export default function VerifyOtpScreen() {
   const shakeAnim = useRef(new Animated.Value(0)).current;
   const inputRef = useRef<TextInput>(null);
   const isMountedRef = useRef(true);
-
-  const maskedPhone = useMemo(() => {
-    if (!phone) return "";
-    return phone.replace(/^(\+256\d{2})\d{4}(\d{2})$/, "$1****$2");
-  }, [phone]);
+  const verifyInFlightRef = useRef(false);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -104,258 +142,22 @@ export default function VerifyOtpScreen() {
     ]).start();
   }, [shakeAnim]);
 
-  const completeRegistrationSession = Boolean(phone && password);
+  const resetToApp = useCallback(() => {
+    rootNavigation.reset({
+      index: 0,
+      routes: [{ name: "App" }],
+    });
+  }, [rootNavigation]);
 
-  const rootStyle = useMemo<ViewStyle>(
-    () => ({
-      flex: 1,
-    }),
-    [],
-  );
-
-  const contentStyle = useMemo<ViewStyle>(
-    () => ({
-      flexGrow: 1,
-      paddingTop: theme.spacing.md,
-      paddingBottom: theme.spacing.lg,
-      paddingHorizontal: theme.spacing.screenX,
-    }),
-    [theme.spacing.lg, theme.spacing.md, theme.spacing.screenX],
-  );
-
-  const brandSectionStyle = useMemo<ViewStyle>(
-    () => ({
-      marginBottom: theme.spacing.xl,
-    }),
-    [theme.spacing.xl],
-  );
-
-  const brandRowStyle = useMemo<ViewStyle>(
-    () => ({
-      flexDirection: "row",
-      alignItems: "center",
-      paddingTop: theme.spacing.xs,
-      paddingHorizontal: 2,
-    }),
-    [theme.spacing.xs],
-  );
-
-  const navMarkStyle = useMemo<ViewStyle>(
-    () => ({
-      width: 44,
-      height: 44,
-      borderRadius: 16,
-      backgroundColor: theme.colors.bgSurface,
-      borderWidth: 1,
-      borderColor: theme.colors.borderDefault,
-      alignItems: "center",
-      justifyContent: "center",
-      marginRight: theme.spacing.md,
-      ...theme.shadows.level1,
-    }),
-    [
-      theme.colors.bgSurface,
-      theme.colors.borderDefault,
-      theme.shadows.level1,
-      theme.spacing.md,
-    ],
-  );
-
-  const brandMarkStyle = useMemo<ViewStyle>(
-    () => ({
-      width: 52,
-      height: 52,
-      borderRadius: 16,
-      backgroundColor: theme.colors.bgSurface,
-      borderWidth: 1,
-      borderColor: theme.colors.borderDefault,
-      alignItems: "center",
-      justifyContent: "center",
-      marginRight: theme.spacing.md,
-      ...theme.shadows.level1,
-    }),
-    [
-      theme.colors.bgSurface,
-      theme.colors.borderDefault,
-      theme.shadows.level1,
-      theme.spacing.md,
-    ],
-  );
-
-  const brandLogoStyle = useMemo<ViewStyle>(
-    () => ({
-      width: 72,
-      height: 72,
-    }),
-    [],
-  );
-
-  const brandTextWrapStyle = useMemo<ViewStyle>(
-    () => ({
-      flex: 1,
-    }),
-    [],
-  );
-
-  const brandSubtitleStyle = useMemo<ViewStyle>(
-    () => ({
-      marginTop: theme.spacing.xxs,
-    }),
-    [theme.spacing.xxs],
-  );
-
-  const bodyWrapStyle = useMemo<ViewStyle>(
-    () => ({
-      flex: 1,
-      justifyContent: "center",
-      paddingTop: theme.spacing.lg,
-    }),
-    [theme.spacing.lg],
-  );
-
-  const formShellStyle = useMemo<ViewStyle>(
-    () => ({
-      borderRadius: 28,
-      backgroundColor: theme.colors.bgSurfaceElevated,
-      borderWidth: 1,
-      borderColor: theme.colors.borderDefault,
-      padding: theme.spacing.lg,
-      ...theme.shadows.level2,
-    }),
-    [
-      theme.colors.bgSurfaceElevated,
-      theme.colors.borderDefault,
-      theme.shadows.level2,
-      theme.spacing.lg,
-    ],
-  );
-
-  const formTopStyle = useMemo<ViewStyle>(
-    () => ({
-      marginBottom: theme.spacing.md,
-    }),
-    [theme.spacing.md],
-  );
-
-  const formTopHintStyle = useMemo<ViewStyle>(
-    () => ({
-      marginTop: 6,
-    }),
-    [],
-  );
-
-  const otpWrapStyle = useMemo<ViewStyle>(
-    () => ({
-      marginBottom: theme.spacing.md,
-    }),
-    [theme.spacing.md],
-  );
-
-  const otpContainerStyle = useMemo<ViewStyle>(
-    () => ({
-      flexDirection: "row",
-      justifyContent: "space-between",
-      marginBottom: theme.spacing.sm,
-    }),
-    [theme.spacing.sm],
-  );
-
-  const otpBoxStyle = useMemo<ViewStyle>(
-    () => ({
-      flex: 1,
-      maxWidth: 52,
-      height: 60,
-      borderRadius: theme.radius.lg,
-      backgroundColor: theme.colors.inputBg,
-      borderWidth: 1,
-      borderColor: theme.colors.inputBorder,
-      alignItems: "center",
-      justifyContent: "center",
-    }),
-    [theme.colors.inputBg, theme.colors.inputBorder, theme.radius.lg],
-  );
-
-  const otpBoxSpacerStyle = useMemo<ViewStyle>(
-    () => ({
-      marginRight: theme.spacing.xs,
-    }),
-    [theme.spacing.xs],
-  );
-
-  const otpBoxActiveStyle = useMemo<ViewStyle>(
-    () => ({
-      borderColor: theme.colors.inputBorderFocused,
-      backgroundColor: theme.colors.bgSurfaceElevated,
-    }),
-    [theme.colors.bgSurfaceElevated, theme.colors.inputBorderFocused],
-  );
-
-  const otpBoxFilledStyle = useMemo<ViewStyle>(
-    () => ({
-      borderColor: theme.colors.borderStrong,
-    }),
-    [theme.colors.borderStrong],
-  );
-
-  const otpBoxErrorStyle = useMemo<ViewStyle>(
-    () => ({
-      borderColor: theme.colors.inputBorderError,
-    }),
-    [theme.colors.inputBorderError],
-  );
-
-  const hiddenInputStyle = useMemo<ViewStyle>(
-    () => ({
-      position: "absolute",
-      opacity: 0,
-      width: 1,
-      height: 1,
-    }),
-    [],
-  );
-
-  const footerActionsStyle = useMemo<ViewStyle>(
-    () => ({
-      marginTop: theme.spacing.md,
-    }),
-    [theme.spacing.md],
-  );
-
-  const resendWrapStyle = useMemo<ViewStyle>(
-    () => ({
-      alignItems: "center",
-      justifyContent: "center",
-      minHeight: 44,
-      marginTop: theme.spacing.sm,
-    }),
-    [theme.spacing.sm],
-  );
-
-  const footerStyle = useMemo<ViewStyle>(
-    () => ({
-      alignItems: "center",
-      paddingTop: theme.spacing.sm,
-    }),
-    [theme.spacing.sm],
-  );
-
-  const helperRowStyle = useMemo<ViewStyle>(
-    () => ({
-      flexDirection: "row",
-      alignItems: "center",
-      justifyContent: "center",
-      flexWrap: "wrap",
-    }),
-    [],
-  );
+  const resetToPremium = useCallback(() => {
+    rootNavigation.reset({
+      index: 1,
+      routes: [{ name: "App" }, { name: "Premium" }],
+    });
+  }, [rootNavigation]);
 
   const handleVerify = useCallback(async () => {
-    if (loading) return;
-
-    if (!phone || !password) {
-      setError("Registration session is incomplete. Please start again.");
-      return;
-    }
+    if (verifyInFlightRef.current || loading) return;
 
     if (otp.length !== OTP_LENGTH) {
       setError("Enter the 6-digit code.");
@@ -365,97 +167,102 @@ export default function VerifyOtpScreen() {
 
     Keyboard.dismiss();
     setError(null);
+    verifyInFlightRef.current = true;
 
     if (isMountedRef.current) {
       setLoading(true);
     }
 
     try {
-      await verifyRegistrationOtp({
-        phone,
+      const result = await verifyRegistrationOtp({
+        phone: canonicalPhone,
         otp,
         password,
       });
 
       if (!isMountedRef.current) return;
 
-      const pending = consumePendingIntent();
+      if (!result.ok) {
+        setOtp("");
+        triggerShake();
+        setError(result.error.message);
+        inputRef.current?.focus();
+        return;
+      }
+
+      const pending = await peekPendingIntent();
 
       const shouldResumePremium =
         intent === "premium_upgrade" ||
-        (pending?.intent === "premium" && pending?.returnTo === "Premium");
+        (role === "job_seeker" && pending?.kind === "premium_upgrade");
 
       const shouldResumePostJob =
         intent === "post_job" ||
-        (pending?.intent === "post_job" && pending?.returnTo === "PostJob");
+        (role === "employer" && pending?.kind === "post_job");
+
+      await clearPendingIntent();
 
       if (shouldResumePremium) {
-        navigation.reset({
-          index: 1,
-          routes: [{ name: "App" }, { name: "Premium" }],
-        });
+        resetToPremium();
         return;
       }
 
       if (shouldResumePostJob) {
-        navigation.reset({
-          index: 0,
-          routes: [{ name: "App" }],
-        });
+        resetToApp();
         return;
       }
 
-      navigation.reset({
-        index: 0,
-        routes: [{ name: "App" }],
-      });
-    } catch (err) {
-      if (!isMountedRef.current) return;
-
-      setOtp("");
-      triggerShake();
-      setError(err instanceof Error ? err.message : "Invalid or expired code.");
-      inputRef.current?.focus();
+      resetToApp();
     } finally {
+      verifyInFlightRef.current = false;
+
       if (isMountedRef.current) {
         setLoading(false);
       }
     }
-  }, [otp, phone, password, loading, navigation, intent, triggerShake]);
+  }, [
+    canonicalPhone,
+    intent,
+    loading,
+    otp,
+    password,
+    resetToApp,
+    resetToPremium,
+    role,
+    triggerShake,
+  ]);
 
   const handleResend = useCallback(async () => {
-    if (cooldown > 0 || loading || resending || !phone) return;
+    if (cooldown > 0 || loading || resending) return;
+
+    if (isMountedRef.current) {
+      setResending(true);
+      setError(null);
+    }
 
     try {
-      if (isMountedRef.current) {
-        setResending(true);
-        setError(null);
-      }
-
-      await resendRegistrationOtp({
-        phone,
-      });
+      const result = await resendRegistrationOtp({ phone: canonicalPhone });
 
       if (!isMountedRef.current) return;
+
+      if (!result.ok) {
+        setError(result.error.message);
+        return;
+      }
 
       setCooldown(RESEND_SECONDS);
       setOtp("");
       inputRef.current?.focus();
-    } catch (err) {
-      if (!isMountedRef.current) return;
-
-      setError(err instanceof Error ? err.message : "Unable to resend code.");
     } finally {
       if (isMountedRef.current) {
         setResending(false);
       }
     }
-  }, [cooldown, phone, loading, resending]);
+  }, [canonicalPhone, cooldown, loading, resending]);
 
   const handleOtpChange = useCallback(
     (text: string) => {
       if (!/^\d*$/.test(text) || text.length > OTP_LENGTH) return;
-
       setOtp(text);
       if (error) setError(null);
     },
@@ -463,23 +270,158 @@ export default function VerifyOtpScreen() {
   );
 
   useEffect(() => {
-    if (otp.length === OTP_LENGTH && !loading && completeRegistrationSession) {
+    if (otp.length === OTP_LENGTH && !loading && !verifyInFlightRef.current) {
       void handleVerify();
     }
-  }, [otp, loading, completeRegistrationSession, handleVerify]);
+  }, [otp, loading, handleVerify]);
 
   const handleBackToLogin = useCallback(() => {
     navigation.popToTop();
   }, [navigation]);
 
+  const styles = useMemo(
+    () =>
+      StyleSheet.create({
+        root: {
+          flex: 1,
+        },
+        content: {
+          flexGrow: 1,
+          paddingTop: theme.spacing.md,
+          paddingBottom: theme.spacing.lg,
+          paddingHorizontal: theme.spacing.screenX,
+        },
+        brandSection: {
+          marginBottom: theme.spacing.xl,
+        },
+        brandRow: {
+          flexDirection: "row",
+          alignItems: "center",
+          paddingTop: theme.spacing.xs,
+          paddingHorizontal: 2,
+        },
+        navMark: {
+          width: 44,
+          height: 44,
+          borderRadius: 16,
+          backgroundColor: theme.colors.bgSurface,
+          borderWidth: 1,
+          borderColor: theme.colors.borderDefault,
+          alignItems: "center",
+          justifyContent: "center",
+          marginRight: theme.spacing.md,
+          ...theme.shadows.level1,
+        },
+        brandMark: {
+          width: 52,
+          height: 52,
+          borderRadius: 16,
+          backgroundColor: theme.colors.bgSurface,
+          borderWidth: 1,
+          borderColor: theme.colors.borderDefault,
+          alignItems: "center",
+          justifyContent: "center",
+          marginRight: theme.spacing.md,
+          ...theme.shadows.level1,
+        },
+        brandLogo: {
+          width: 72,
+          height: 72,
+        },
+        brandTextWrap: {
+          flex: 1,
+        },
+        brandSubtitle: {
+          marginTop: theme.spacing.xxs,
+        },
+        bodyWrap: {
+          flex: 1,
+          justifyContent: "center",
+          paddingTop: theme.spacing.lg,
+        },
+        formShell: {
+          borderRadius: 28,
+          backgroundColor: theme.colors.bgSurfaceElevated,
+          borderWidth: 1,
+          borderColor: theme.colors.borderDefault,
+          padding: theme.spacing.lg,
+          ...theme.shadows.level2,
+        },
+        formTop: {
+          marginBottom: theme.spacing.md,
+        },
+        formTopHint: {
+          marginTop: 6,
+        },
+        otpWrap: {
+          marginBottom: theme.spacing.md,
+        },
+        otpContainer: {
+          flexDirection: "row",
+          justifyContent: "space-between",
+          marginBottom: theme.spacing.sm,
+        },
+        otpBox: {
+          flex: 1,
+          maxWidth: 52,
+          height: 60,
+          borderRadius: theme.radius.lg,
+          backgroundColor: theme.colors.inputBg,
+          borderWidth: 1,
+          borderColor: theme.colors.inputBorder,
+          alignItems: "center",
+          justifyContent: "center",
+        },
+        otpBoxSpacer: {
+          marginRight: theme.spacing.xs,
+        },
+        otpBoxActive: {
+          borderColor: theme.colors.inputBorderFocused,
+          backgroundColor: theme.colors.bgSurfaceElevated,
+        },
+        otpBoxFilled: {
+          borderColor: theme.colors.borderStrong,
+        },
+        otpBoxError: {
+          borderColor: theme.colors.inputBorderError,
+        },
+        hiddenInput: {
+          position: "absolute",
+          opacity: 0,
+          width: 1,
+          height: 1,
+        },
+        footerActions: {
+          marginTop: theme.spacing.md,
+        },
+        resendWrap: {
+          alignItems: "center",
+          justifyContent: "center",
+          minHeight: 44,
+          marginTop: theme.spacing.sm,
+        },
+        footer: {
+          alignItems: "center",
+          paddingTop: theme.spacing.sm,
+        },
+        helperRow: {
+          flexDirection: "row",
+          alignItems: "center",
+          justifyContent: "center",
+          flexWrap: "wrap",
+        },
+      }),
+    [theme],
+  );
+
   return (
     <AppScreen scroll={false} keyboardAvoiding={false} padded={false}>
       <KeyboardAvoidingView
-        style={rootStyle}
+        style={styles.root}
         behavior={Platform.OS === "ios" ? "padding" : "height"}
       >
         <ScrollView
-          contentContainerStyle={contentStyle}
+          contentContainerStyle={styles.content}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode={
             Platform.OS === "ios" ? "interactive" : "on-drag"
@@ -488,14 +430,14 @@ export default function VerifyOtpScreen() {
           bounces={false}
         >
           <AppEntrance>
-            <View style={brandSectionStyle}>
-              <View style={brandRowStyle}>
+            <View style={styles.brandSection}>
+              <View style={styles.brandRow}>
                 <Pressable
                   onPress={() => navigation.goBack()}
                   accessibilityRole="button"
                   accessibilityLabel="Go back"
                   style={({ pressed }) => [
-                    navMarkStyle,
+                    styles.navMark,
                     pressed ? { opacity: 0.8 } : null,
                   ]}
                 >
@@ -506,22 +448,22 @@ export default function VerifyOtpScreen() {
                   />
                 </Pressable>
 
-                <View style={brandMarkStyle}>
+                <View style={styles.brandMark}>
                   <Image
                     source={require("../../../assets/logo.png")}
-                    style={brandLogoStyle}
+                    style={styles.brandLogo}
                     resizeMode="contain"
                   />
                 </View>
 
-                <View style={brandTextWrapStyle}>
+                <View style={styles.brandTextWrap}>
                   <AppText variant="labelLg" weight="700">
                     AwoJobs
                   </AppText>
                   <AppText
                     variant="caption"
                     tone="secondary"
-                    style={brandSubtitleStyle}
+                    style={styles.brandSubtitle}
                   >
                     Verification
                   </AppText>
@@ -531,24 +473,23 @@ export default function VerifyOtpScreen() {
           </AppEntrance>
 
           <AppEntrance delay={40}>
-            <View style={bodyWrapStyle}>
-              <View style={formShellStyle}>
-                <View style={formTopStyle}>
+            <View style={styles.bodyWrap}>
+              <View style={styles.formShell}>
+                <View style={styles.formTop}>
                   <AppText variant="titleLg">Verification code</AppText>
                   <AppText
                     variant="bodySm"
                     tone="secondary"
-                    style={formTopHintStyle}
+                    style={styles.formTopHint}
                   >
-                    Enter the 6-digit code sent to {maskedPhone || "your phone"}
-                    .
+                    Enter the 6-digit code sent to {maskedPhone}.
                   </AppText>
                 </View>
 
-                <View style={otpWrapStyle}>
+                <View style={styles.otpWrap}>
                   <Animated.View
                     style={[
-                      otpContainerStyle,
+                      styles.otpContainer,
                       { transform: [{ translateX: shakeAnim }] },
                     ]}
                   >
@@ -562,11 +503,11 @@ export default function VerifyOtpScreen() {
                           key={index}
                           onPress={() => inputRef.current?.focus()}
                           style={[
-                            otpBoxStyle,
-                            !isLast ? otpBoxSpacerStyle : null,
-                            isActive && stylesFalsyFix(otpBoxActiveStyle),
-                            isFilled && stylesFalsyFix(otpBoxFilledStyle),
-                            error ? otpBoxErrorStyle : null,
+                            styles.otpBox,
+                            !isLast ? styles.otpBoxSpacer : null,
+                            isActive ? styles.otpBoxActive : null,
+                            isFilled ? styles.otpBoxFilled : null,
+                            error ? styles.otpBoxError : null,
                           ]}
                         >
                           <AppText
@@ -587,7 +528,7 @@ export default function VerifyOtpScreen() {
                       textContentType="oneTimeCode"
                       autoComplete="sms-otp"
                       maxLength={OTP_LENGTH}
-                      style={hiddenInputStyle}
+                      style={styles.hiddenInput}
                       autoFocus
                     />
                   </Animated.View>
@@ -602,24 +543,20 @@ export default function VerifyOtpScreen() {
                   )}
                 </View>
 
-                <View style={footerActionsStyle}>
+                <View style={styles.footerActions}>
                   <AppButton
                     title="Continue"
-                    onPress={handleVerify}
+                    onPress={() => void handleVerify()}
                     loading={loading}
-                    disabled={
-                      loading ||
-                      !completeRegistrationSession ||
-                      otp.length !== OTP_LENGTH
-                    }
+                    disabled={loading || otp.length !== OTP_LENGTH}
                     variant="primary"
                   />
 
                   <Pressable
-                    onPress={handleResend}
+                    onPress={() => void handleResend()}
                     disabled={cooldown > 0 || loading || resending}
                     style={({ pressed }) => [
-                      resendWrapStyle,
+                      styles.resendWrap,
                       pressed && cooldown <= 0 && !loading && !resending
                         ? { opacity: 0.72 }
                         : null,
@@ -641,12 +578,12 @@ export default function VerifyOtpScreen() {
             </View>
           </AppEntrance>
 
-          <View style={footerStyle}>
+          <View style={styles.footer}>
             <Pressable
               onPress={handleBackToLogin}
               style={({ pressed }) => [pressed ? { opacity: 0.72 } : null]}
             >
-              <View style={helperRowStyle}>
+              <View style={styles.helperRow}>
                 <AppText variant="bodySm" tone="secondary">
                   Back to{" "}
                 </AppText>
@@ -660,8 +597,4 @@ export default function VerifyOtpScreen() {
       </KeyboardAvoidingView>
     </AppScreen>
   );
-}
-
-function stylesFalsyFix<T>(style: T): T {
-  return style;
 }

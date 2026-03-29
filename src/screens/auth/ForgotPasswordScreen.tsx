@@ -264,9 +264,15 @@ export default function ForgotPasswordScreen() {
     }
 
     try {
-      await requestPasswordReset({ phone: phone.trim() });
+      const result = await requestPasswordReset({ phone: phone.trim() });
 
       if (!isMountedRef.current) return;
+
+      if (!result.ok) {
+        setMessage(result.error.message);
+        setMessageTone("error");
+        return;
+      }
 
       setMessage("If your account exists, a reset code was sent.");
       setMessageTone("info");
@@ -274,15 +280,6 @@ export default function ForgotPasswordScreen() {
       navigation.navigate("ResetCode", {
         phone: phone.trim(),
       });
-    } catch (err) {
-      if (!isMountedRef.current) return;
-
-      setMessage(
-        err instanceof Error
-          ? err.message
-          : "Unable to process request. Please try again.",
-      );
-      setMessageTone("error");
     } finally {
       if (isMountedRef.current) {
         setLoading(false);

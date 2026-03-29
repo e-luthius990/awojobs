@@ -5,7 +5,7 @@ import {
   Pressable,
   FlatList,
   StyleSheet,
-  ListRenderItem,
+  type ListRenderItem,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 
@@ -22,15 +22,21 @@ type Props = {
   locations: PickerLocation[];
   selectedId: string | null;
   onSelect: (id: string) => void;
+  placeholder?: string;
+  minSearchLength?: number;
+  showInitialItems?: boolean;
+  maxVisibleItems?: number;
 };
-
-const ITEM_HEIGHT = 60;
 
 export default function LocationPicker({
   label,
   locations,
   selectedId,
   onSelect,
+  placeholder = "Search district, town or subcounty...",
+  minSearchLength = 1,
+  showInitialItems = false,
+  maxVisibleItems = 8,
 }: Props) {
   const { theme } = useTheme();
 
@@ -42,13 +48,30 @@ export default function LocationPicker({
     return () => clearTimeout(t);
   }, [search]);
 
+  const normalizedQuery = useMemo(
+    () => debounced.trim().toLowerCase(),
+    [debounced],
+  );
+
   const filtered = useMemo(() => {
-    const q = debounced.trim().toLowerCase();
+    if (!normalizedQuery) {
+      return showInitialItems ? locations.slice(0, maxVisibleItems) : [];
+    }
 
-    if (!q) return [];
+    if (normalizedQuery.length < minSearchLength) {
+      return [];
+    }
 
-    return locations.filter((loc) => loc.name.toLowerCase().includes(q));
-  }, [locations, debounced]);
+    return locations
+      .filter((loc) => loc.name.toLowerCase().includes(normalizedQuery))
+      .slice(0, 100);
+  }, [
+    locations,
+    normalizedQuery,
+    showInitialItems,
+    maxVisibleItems,
+    minSearchLength,
+  ]);
 
   const selectedLocation = useMemo(() => {
     return locations.find((loc) => loc.id === selectedId) ?? null;
@@ -60,11 +83,9 @@ export default function LocationPicker({
         wrap: {
           gap: theme.spacing.sm,
         },
-
         label: {
           color: theme.colors.textPrimary,
         },
-
         selectedBox: {
           backgroundColor: theme.colors.bgSurfaceElevated,
           borderWidth: 1,
@@ -74,15 +95,12 @@ export default function LocationPicker({
           paddingVertical: theme.spacing.sm,
           gap: 4,
         },
-
         selectedLabel: {
           color: theme.colors.primary,
         },
-
         selectedValue: {
           color: theme.colors.textPrimary,
         },
-
         searchWrap: {
           minHeight: 48,
           borderRadius: theme.radius.lg,
@@ -94,20 +112,16 @@ export default function LocationPicker({
           alignItems: "center",
           gap: theme.spacing.sm,
         },
-
         search: {
           flex: 1,
           color: theme.colors.textPrimary,
           fontSize: 14,
           paddingVertical: 0,
         },
-
         list: {
-          maxHeight: 240,
+          maxHeight: 320,
         },
-
         option: {
-          minHeight: ITEM_HEIGHT,
           flexDirection: "row",
           justifyContent: "space-between",
           alignItems: "center",
@@ -120,21 +134,17 @@ export default function LocationPicker({
           marginBottom: theme.spacing.sm,
           gap: theme.spacing.sm,
         },
-
         optionActive: {
           backgroundColor: theme.colors.primary,
           borderColor: theme.colors.primary,
         },
-
         optionText: {
           flex: 1,
           color: theme.colors.textPrimary,
         },
-
         optionTextActive: {
           color: theme.colors.textInverse,
         },
-
         checkWrap: {
           width: 22,
           height: 22,
@@ -143,17 +153,17 @@ export default function LocationPicker({
           justifyContent: "center",
           backgroundColor: theme.colors.bgSurfaceElevated,
         },
-
         checkWrapActive: {
           backgroundColor: "transparent",
         },
-
         empty: {
           paddingVertical: theme.spacing.lg,
           alignItems: "center",
         },
-
         emptyText: {
+          color: theme.colors.textSecondary,
+        },
+        helperText: {
           color: theme.colors.textSecondary,
         },
       }),
@@ -197,19 +207,15 @@ export default function LocationPicker({
         </Pressable>
       );
     },
-    [selectedId, onSelect, styles, theme.colors.textInverse],
+    [onSelect, selectedId, styles, theme.colors.textInverse],
   );
 
   const keyExtractor = useCallback((item: PickerLocation) => item.id, []);
 
-  const getItemLayout = useCallback(
-    (_: ArrayLike<PickerLocation> | null | undefined, index: number) => ({
-      length: ITEM_HEIGHT,
-      offset: ITEM_HEIGHT * index,
-      index,
-    }),
-    [],
-  );
+  const shouldPromptSearch =
+    !showInitialItems &&
+    normalizedQuery.length > 0 &&
+    normalizedQuery.length < minSearchLength;
 
   return (
     <View style={styles.wrap}>
@@ -237,16 +243,28 @@ export default function LocationPicker({
         <TextInput
           value={search}
           onChangeText={setSearch}
-          placeholder="Search district, town or subcounty..."
+          placeholder={placeholder}
           placeholderTextColor={theme.colors.textMuted}
           style={styles.search}
+          autoCapitalize="none"
+          autoCorrect={false}
         />
       </View>
 
-      {debounced.length === 0 ? null : filtered.length === 0 ? (
+      {shouldPromptSearch ? (
+        <View style={styles.empty}>
+          <AppText variant="bodySm" weight="600" style={styles.helperText}>
+            Keep typing to search.
+          </AppText>
+        </View>
+      ) : filtered.length === 0 ? (
         <View style={styles.empty}>
           <AppText variant="bodySm" weight="600" style={styles.emptyText}>
-            No matching location found
+            {normalizedQuery
+              ? "No matching location found"
+              : showInitialItems
+                ? "No locations available"
+                : "Start typing to search"}
           </AppText>
         </View>
       ) : (
@@ -255,14 +273,12 @@ export default function LocationPicker({
           keyExtractor={keyExtractor}
           renderItem={renderItem}
           style={styles.list}
-          scrollEnabled={false}
-          removeClippedSubviews
+          scrollEnabled
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
           initialNumToRender={20}
           maxToRenderPerBatch={20}
           windowSize={7}
-          getItemLayout={getItemLayout}
         />
       )}
     </View>

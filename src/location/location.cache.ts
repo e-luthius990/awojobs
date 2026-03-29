@@ -4,6 +4,14 @@ import { ResolvedLocation } from "./location.types";
 const LOCATION_KEY = "awojobs:location";
 const MAX_AGE = 5 * 60 * 1000;
 
+const LIST_PREFIX = "awojobs:location_list:v2:";
+const LIST_MAX_AGE = 10 * 60 * 1000;
+
+type CachedListEnvelope<T> = {
+  saved_at: number;
+  items: T[];
+};
+
 function isStringOrNull(value: unknown): value is string | null {
   return typeof value === "string" || value === null;
 }
@@ -73,8 +81,6 @@ export async function clearCachedLocation() {
   await AsyncStorage.removeItem(LOCATION_KEY);
 }
 
-const LIST_PREFIX = "awojobs:location_list:";
-
 export async function getCachedList<T = unknown>(
   key: string
 ): Promise<T[] | null> {
@@ -82,8 +88,22 @@ export async function getCachedList<T = unknown>(
   if (!raw) return null;
 
   try {
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? (parsed as T[]) : null;
+    const parsed = JSON.parse(raw) as Partial<CachedListEnvelope<T>>;
+    if (
+      !parsed ||
+      typeof parsed !== "object" ||
+      typeof parsed.saved_at !== "number" ||
+      !Number.isFinite(parsed.saved_at) ||
+      !Array.isArray(parsed.items)
+    ) {
+      return null;
+    }
+
+    if (Date.now() - parsed.saved_at > LIST_MAX_AGE) {
+      return null;
+    }
+
+    return parsed.items;
   } catch {
     return null;
   }
@@ -93,8 +113,10 @@ export async function setCachedList<T = unknown>(
   key: string,
   value: T[]
 ) {
-  await AsyncStorage.setItem(
-    `${LIST_PREFIX}${key}`,
-    JSON.stringify(value)
-  );
+  const payload: CachedListEnvelope<T> = {
+    saved_at: Date.now(),
+    items: value,
+  };
+
+  await AsyncStorage.setItem(`${LIST_PREFIX}${key}`, JSON.stringify(payload));
 }

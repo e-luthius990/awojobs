@@ -4,7 +4,6 @@ import type { NavigatorScreenParams } from "@react-navigation/native";
 import { AppTabsNavigator } from "./AppTabsNavigator";
 import { AuthNavigator } from "./AuthNavigator";
 import type { AuthStackParamList } from "./AuthNavigator";
-import ManualLocationScreen from "../screens/location/ManualLocationScreen";
 import PremiumScreen from "../screens/premium/PremiumScreen";
 import PremiumPaymentScreen from "../screens/premium/PremiumPaymentScreen";
 
@@ -15,7 +14,6 @@ import { useTheme } from "../theme/useTheme";
 export type RootStackParamList = {
   App: undefined;
   AuthModal: NavigatorScreenParams<AuthStackParamList>;
-  ManualLocation: undefined;
   Premium: undefined;
   PremiumPayment: {
     purpose: "premium_1_day" | "premium_7_days" | "premium_30_days";
@@ -30,16 +28,27 @@ const Stack = createNativeStackNavigator<RootStackParamList>();
 
 export function RootNavigator() {
   const { theme } = useTheme();
-  const { session } = useSession();
+
+  const {
+    session,
+    loading: sessionLoading,
+    errorCode: sessionErrorCode,
+  } = useSession();
 
   const userId = session?.user?.id ?? null;
-  const { profile, isSuspended } = useProfile(userId);
 
-  const isAuthenticated = Boolean(session);
-  const resolvedProfile = profile && !isSuspended ? profile : null;
+  const {
+    profile,
+    isSuspended,
+    loading: profileLoading,
+    errorCode: profileErrorCode,
+  } = useProfile(userId);
+
+  const authBootstrapping = sessionLoading || (!!session && profileLoading);
 
   return (
     <Stack.Navigator
+      initialRouteName="App"
       screenOptions={{
         headerShown: false,
         animation: "default",
@@ -51,27 +60,23 @@ export function RootNavigator() {
           <AppTabsNavigator
             {...props}
             session={session}
-            profile={resolvedProfile}
+            sessionLoading={sessionLoading}
+            sessionErrorCode={sessionErrorCode}
+            profile={profile}
+            profileLoading={profileLoading}
+            profileErrorCode={profileErrorCode}
+            bootstrapping={authBootstrapping}
+            isSuspended={isSuspended}
           />
         )}
       </Stack.Screen>
 
-      {!isAuthenticated ? (
-        <Stack.Screen
-          name="AuthModal"
-          component={AuthNavigator}
-          options={{
-            presentation: "modal",
-            animation: "slide_from_bottom",
-          }}
-        />
-      ) : null}
-
       <Stack.Screen
-        name="ManualLocation"
-        component={ManualLocationScreen}
+        name="AuthModal"
+        component={AuthNavigator}
         options={{
-          animation: "slide_from_right",
+          presentation: "modal",
+          animation: "slide_from_bottom",
         }}
       />
 

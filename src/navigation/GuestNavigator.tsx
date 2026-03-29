@@ -1,15 +1,29 @@
-import React, { useMemo } from "react";
-import { Platform, ViewStyle } from "react-native";
+import React, { useCallback, useMemo } from "react";
+import { Platform, type ViewStyle } from "react-native";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
+import {
+  useNavigation,
+  type CompositeNavigationProp,
+} from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
+import type { BottomTabNavigationProp } from "@react-navigation/bottom-tabs";
+import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 
 import { FeedNavigator } from "./FeedNavigator";
+import type { RootStackParamList } from "./RootNavigator";
 import { useTheme } from "../theme/useTheme";
+import MyAccountGuestScreen from "../screens/settings/MyAccountGuestScreen";
 
-type GuestTabParamList = {
+export type GuestTabParamList = {
   Jobs: undefined;
   PostJob: undefined;
+  MyAccount: undefined;
 };
+
+type GuestNavigationProp = CompositeNavigationProp<
+  BottomTabNavigationProp<GuestTabParamList>,
+  NativeStackNavigationProp<RootStackParamList>
+>;
 
 const Tab = createBottomTabNavigator<GuestTabParamList>();
 
@@ -19,6 +33,7 @@ function EmptyScreen() {
 
 export function GuestNavigator() {
   const { theme } = useTheme();
+  const navigation = useNavigation<GuestNavigationProp>();
 
   const tabBarStyle = useMemo<ViewStyle>(
     () => ({
@@ -36,6 +51,16 @@ export function GuestNavigator() {
       theme.shadows.level2,
     ],
   );
+
+  const openEmployerLogin = useCallback(() => {
+    navigation.navigate("AuthModal", {
+      screen: "Login",
+      params: {
+        forcedRole: "employer",
+        intent: "post_job",
+      },
+    });
+  }, [navigation]);
 
   return (
     <Tab.Navigator
@@ -61,6 +86,9 @@ export function GuestNavigator() {
               break;
             case "PostJob":
               iconName = focused ? "add-circle" : "add-circle-outline";
+              break;
+            case "MyAccount":
+              iconName = focused ? "person" : "person-outline";
               break;
             default:
               iconName = "ellipse";
@@ -92,24 +120,21 @@ export function GuestNavigator() {
           title: "Post Job",
           tabBarLabel: "Post Job",
         }}
-        listeners={({ navigation }) => ({
+        listeners={{
           tabPress: (e) => {
             e.preventDefault();
-
-            navigation.navigate("Jobs");
-
-            const parent = navigation.getParent();
-            if (!parent) return;
-
-            parent.navigate("AuthModal", {
-              screen: "Login",
-              params: {
-                forcedRole: "employer",
-                intent: "post_job",
-              },
-            });
+            openEmployerLogin();
           },
-        })}
+        }}
+      />
+
+      <Tab.Screen
+        name="MyAccount"
+        component={MyAccountGuestScreen}
+        options={{
+          title: "My Account",
+          tabBarLabel: "Account",
+        }}
       />
     </Tab.Navigator>
   );
