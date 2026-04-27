@@ -11,7 +11,7 @@ export const spacing: SpacingScale = {
   xxl: 32,
   xxxl: 40,
 
-  section: 36,
+  section: 32,
   screenX: 20,
   screenY: 24,
 };

@@ -84,7 +84,7 @@ export function AppCard({
     if (!disabled) return null;
 
     return {
-      opacity: 0.72,
+      opacity: 0.68,
       shadowOpacity: 0,
       elevation: 0,
     };
@@ -94,29 +94,29 @@ export function AppCard({
     switch (variant) {
       case "premium":
         return {
+          opacity: 0.98,
           borderColor: theme.colors.premiumBorder,
-          opacity: 0.96,
-          transform: [{ scale: 0.997 }],
         };
+
       case "sponsored":
         return {
+          opacity: 0.98,
           borderColor: theme.colors.sponsoredBorder,
-          opacity: 0.96,
-          transform: [{ scale: 0.997 }],
         };
+
       case "muted":
       case "sunken":
       case "elevated":
       case "default":
       default:
         return {
+          opacity: 0.98,
           backgroundColor: theme.colors.surfacePressed,
-          borderColor: theme.colors.borderStrong,
-          transform: [{ scale: 0.997 }],
+          borderColor: theme.colors.borderDefault,
         };
     }
   }, [
-    theme.colors.borderStrong,
+    theme.colors.borderDefault,
     theme.colors.premiumBorder,
     theme.colors.sponsoredBorder,
     theme.colors.surfacePressed,

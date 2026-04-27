@@ -82,7 +82,7 @@ export const typography: TypographyScale = {
     fontSize: 14,
     lineHeight: 18,
     fontWeight: "700",
-    letterSpacing: 0.12,
+    letterSpacing: 0.08,
   },
 
   label: {
@@ -90,7 +90,7 @@ export const typography: TypographyScale = {
     fontSize: 13,
     lineHeight: 16,
     fontWeight: "700",
-    letterSpacing: 0.12,
+    letterSpacing: 0.08,
   },
 
   caption: {
@@ -98,7 +98,7 @@ export const typography: TypographyScale = {
     fontSize: 12,
     lineHeight: 16,
     fontWeight: "600",
-    letterSpacing: 0.16,
+    letterSpacing: 0.08,
   },
 
   captionSm: {
@@ -106,6 +106,6 @@ export const typography: TypographyScale = {
     fontSize: 11,
     lineHeight: 14,
     fontWeight: "600",
-    letterSpacing: 0.16,
+    letterSpacing: 0.08,
   },
 };

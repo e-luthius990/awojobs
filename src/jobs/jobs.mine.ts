@@ -18,21 +18,29 @@ export async function fetchMyJobs(): Promise<Job[]> {
     .from("jobs")
     .select(`
       id,
+      employer_id,
       title,
       description,
       pay_type,
       location_id,
-      employer_id,
+      district_id,
       contact_method,
       contact_phone,
       status,
       is_sponsored,
       sponsored_until,
       expires_at,
+      posting_resolution_level,
+      posting_display_label,
+      posting_latitude,
+      posting_longitude,
+      posting_accuracy_meters,
+      posted_from_device_at,
       created_at,
       views_count,
       applications_count
     `)
+    .eq("employer_id", user.id)
     .order("created_at", { ascending: false });
 
   if (error) {
@@ -40,7 +48,18 @@ export async function fetchMyJobs(): Promise<Job[]> {
     throw error;
   }
 
-  return (data ?? []) as Job[];
+  const rows = (data ?? []) as Array<Omit<Job, "is_currently_sponsored">>;
+
+  const now = Date.now();
+
+  return rows.map((job) => ({
+    ...job,
+    is_currently_sponsored:
+      Boolean(job.is_sponsored) &&
+      Boolean(job.sponsored_until) &&
+      !Number.isNaN(Date.parse(job.sponsored_until!)) &&
+      Date.parse(job.sponsored_until!) > now,
+  })) as Job[];
 }
 
 /* ---------------------------------------------
@@ -48,10 +67,16 @@ export async function fetchMyJobs(): Promise<Job[]> {
 ---------------------------------------------- */
 
 export async function deleteJob(jobId: string) {
+  const normalizedJobId = typeof jobId === "string" ? jobId.trim() : "";
+
+  if (!normalizedJobId) {
+    throw new Error("Missing job id");
+  }
+
   const { data, error } = await supabase
     .from("jobs")
     .delete()
-    .eq("id", jobId)
+    .eq("id", normalizedJobId)
     .select("id")
     .maybeSingle();
 

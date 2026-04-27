@@ -1,11 +1,12 @@
 import React, { useMemo, useCallback, useState, useEffect } from "react";
-import { Alert, Linking, Switch, View, type ViewStyle } from "react-native";
+import { Alert, Linking, Switch, View } from "react-native";
 
 import { supabase } from "../../core/supabase";
 import {
   logout as logoutUser,
   closeEmployerAccount,
 } from "../../auth/auth.service";
+
 import { useSession } from "../../state/useSession";
 import { useProfile } from "../../state/useProfile";
 
@@ -32,8 +33,10 @@ export default function EmployerProfileScreen() {
 
   const [notificationsEnabled, setNotificationsEnabled] = useState(false);
   const [savingNotifications, setSavingNotifications] = useState(false);
+
   const [closingAccount, setClosingAccount] = useState(false);
   const [confirmCloseVisible, setConfirmCloseVisible] = useState(false);
+
   const [accountActionError, setAccountActionError] = useState<string | null>(
     null,
   );
@@ -42,85 +45,10 @@ export default function EmployerProfileScreen() {
 
   useEffect(() => {
     if (!profile) return;
-
-    setNotificationsEnabled(
-      "push_opt_in" in profile && typeof profile.push_opt_in === "boolean"
-        ? profile.push_opt_in
-        : false,
-    );
+    setNotificationsEnabled(!!profile.push_opt_in);
   }, [profile]);
 
-  const contentStyle = useMemo<ViewStyle>(
-    () => ({
-      gap: theme.spacing.lg,
-      paddingBottom: theme.spacing.xxxl,
-    }),
-    [theme.spacing.lg, theme.spacing.xxxl],
-  );
-
-  const cardContentStyle = useMemo<ViewStyle>(
-    () => ({
-      gap: theme.spacing.lg,
-    }),
-    [theme.spacing.lg],
-  );
-
-  const topRowStyle = useMemo<ViewStyle>(
-    () => ({
-      flexDirection: "row",
-      alignItems: "flex-start",
-      justifyContent: "space-between",
-      gap: theme.spacing.sm,
-    }),
-    [theme.spacing.sm],
-  );
-
-  const topTextStyle = useMemo<ViewStyle>(
-    () => ({
-      flex: 1,
-      gap: theme.spacing.xs,
-    }),
-    [theme.spacing.xs],
-  );
-
-  const infoGroupStyle = useMemo<ViewStyle>(
-    () => ({
-      gap: theme.spacing.md,
-    }),
-    [theme.spacing.md],
-  );
-
-  const settingsWrapStyle = useMemo<ViewStyle>(
-    () => ({
-      gap: theme.spacing.md,
-    }),
-    [theme.spacing.md],
-  );
-
-  const settingRowStyle = useMemo<ViewStyle>(
-    () => ({
-      flexDirection: "row",
-      alignItems: "center",
-      justifyContent: "space-between",
-      gap: theme.spacing.md,
-    }),
-    [theme.spacing.md],
-  );
-
-  const settingTextWrapStyle = useMemo<ViewStyle>(
-    () => ({
-      flex: 1,
-      gap: theme.spacing.xs,
-    }),
-    [theme.spacing.xs],
-  );
-
-  const actionsWrapStyle = useMemo<ViewStyle>(
-    () => ({
-      gap: theme.spacing.sm,
-    }),
-    [theme.spacing.sm],
-  );
+  /* ---------------- AUTH ---------------- */
 
   const handleLogout = useCallback(() => {
     Alert.alert("Logout", "Are you sure you want to logout?", [
@@ -139,62 +67,53 @@ export default function EmployerProfileScreen() {
     ]);
   }, []);
 
-  const handleRelogin = useCallback(async () => {
-    try {
-      await logoutUser();
-    } catch {
-      Alert.alert("Logout failed", "Please try again.");
-    }
-  }, []);
+  /* ---------------- NOTIFICATIONS ---------------- */
 
   const handleToggleNotifications = useCallback(async () => {
-    if (
-      !userId ||
-      savingNotifications ||
-      closingAccount ||
-      confirmCloseVisible
-    ) {
+    if (!userId || savingNotifications || closingAccount || confirmCloseVisible)
       return;
-    }
 
-    const nextValue = !notificationsEnabled;
-    setNotificationsEnabled(nextValue);
+    const next = !notificationsEnabled;
+    setNotificationsEnabled(next);
     setSavingNotifications(true);
 
     try {
       const { error } = await supabase
         .from("profiles")
-        .update({ push_opt_in: nextValue })
+        .update({ push_opt_in: next })
         .eq("id", userId);
 
       if (error) throw error;
     } catch {
-      setNotificationsEnabled(!nextValue);
-      Alert.alert("Update failed", "Could not update notification settings.");
+      setNotificationsEnabled(!next);
+      Alert.alert("Update failed", "Could not update notifications.");
     } finally {
       setSavingNotifications(false);
     }
   }, [
-    closingAccount,
-    confirmCloseVisible,
+    userId,
     notificationsEnabled,
     savingNotifications,
-    userId,
+    closingAccount,
+    confirmCloseVisible,
   ]);
+
+  /* ---------------- TERMS ---------------- */
 
   const handleOpenTerms = useCallback(async () => {
     try {
       const supported = await Linking.canOpenURL(TERMS_URL);
       if (!supported) {
-        Alert.alert("Unavailable", "Could not open the terms page.");
+        Alert.alert("Unavailable", "Could not open terms.");
         return;
       }
-
       await Linking.openURL(TERMS_URL);
     } catch {
-      Alert.alert("Unavailable", "Could not open the terms page.");
+      Alert.alert("Unavailable", "Could not open terms.");
     }
   }, []);
+
+  /* ---------------- CLOSE ACCOUNT ---------------- */
 
   const runCloseAccount = useCallback(async () => {
     try {
@@ -209,16 +128,14 @@ export default function EmployerProfileScreen() {
 
       Alert.alert(
         "Account closed",
-        "Your employer account has been closed and you have been signed out.",
+        "Your employer account has been closed successfully.",
       );
     } catch (error) {
       const message =
-        error instanceof Error
-          ? error.message
-          : "Unable to close account right now.";
+        error instanceof Error ? error.message : "Failed to close account.";
 
       setAccountActionError(message);
-      Alert.alert("Unable to close account", message);
+      Alert.alert("Error", message);
     } finally {
       setClosingAccount(false);
     }
@@ -228,16 +145,14 @@ export default function EmployerProfileScreen() {
     setConfirmCloseVisible(false);
 
     Alert.alert(
-      "Close account",
-      "This closes your employer account, signs you out, and keeps job, application, and payment history where required. This action cannot be undone from the app.",
+      "Final confirmation",
+      "This will permanently close your employer account and sign you out.",
       [
         { text: "Cancel", style: "cancel" },
         {
           text: "Close account",
           style: "destructive",
-          onPress: () => {
-            void runCloseAccount();
-          },
+          onPress: () => void runCloseAccount(),
         },
       ],
     );
@@ -248,13 +163,14 @@ export default function EmployerProfileScreen() {
     setConfirmCloseVisible(true);
   }, [closingAccount]);
 
+  /* ---------------- LOADING ---------------- */
+
   if (isLoading) {
     return (
       <AppScreen scroll>
         <View style={{ gap: theme.spacing.md }}>
           <AppHeader title="Employer Profile" />
           <SkeletonCard lines={3} />
-          <SkeletonCard lines={2} />
           <SkeletonCard lines={2} />
         </View>
       </AppScreen>
@@ -266,162 +182,130 @@ export default function EmployerProfileScreen() {
       <AppScreen centerContent>
         <EmptyState
           title="Profile unavailable"
-          message="We could not load your account details."
-          action={
-            <AppButton
-              title="Re-login"
-              onPress={handleRelogin}
-              variant="primary"
-            />
-          }
+          message="We could not load your account."
+          action={<AppButton title="Retry" onPress={handleLogout} />}
         />
       </AppScreen>
     );
   }
 
-  const phoneValue =
-    typeof profile.phone_number === "string" && profile.phone_number.trim()
-      ? profile.phone_number.trim()
-      : "—";
+  const fullName = profile.full_name?.trim() || "Employer account";
+  const phone = profile.phone_number?.trim() || "—";
+  const business = profile.business_name?.trim() || "—";
 
-  const fullNameValue =
-    typeof profile.full_name === "string" && profile.full_name.trim()
-      ? profile.full_name.trim()
-      : "Employer account";
-
-  const businessNameValue =
-    typeof profile.business_name === "string" && profile.business_name.trim()
-      ? profile.business_name.trim()
-      : "—";
+  /* ---------------- UI ---------------- */
 
   return (
     <AppScreen scroll>
-      <View style={contentStyle}>
+      <View
+        style={{ gap: theme.spacing.lg, paddingBottom: theme.spacing.xxxl }}
+      >
         <AppHeader
           title="Employer Profile"
-          subtitle="Manage your employer account and settings"
+          subtitle="Manage your account & settings"
         />
 
+        {/* PROFILE */}
         <AppCard variant="elevated" padding="lg">
-          <View style={cardContentStyle}>
-            <View style={topRowStyle}>
-              <View style={topTextStyle}>
-                <AppText variant="h3">{fullNameValue}</AppText>
-              </View>
-
+          <View style={{ gap: theme.spacing.sm }}>
+            <View
+              style={{ flexDirection: "row", justifyContent: "space-between" }}
+            >
+              <AppText variant="h3">{fullName}</AppText>
               <StatusBadge label="EMPLOYER" tone="info" />
             </View>
 
-            <View style={infoGroupStyle}>
-              <ProfileRow label="Phone Number" value={phoneValue} />
-              <ProfileRow label="Business Name" value={businessNameValue} />
-            </View>
+            <AppText tone="secondary">{phone}</AppText>
+            <AppText tone="secondary">{business}</AppText>
           </View>
         </AppCard>
 
-        <AppCard variant="default" padding="lg">
-          <View style={settingsWrapStyle}>
+        {/* SETTINGS */}
+        <AppCard padding="lg">
+          <View style={{ gap: theme.spacing.md }}>
             <AppText variant="titleLg">Preferences</AppText>
 
-            <View style={settingRowStyle}>
-              <View style={settingTextWrapStyle}>
-                <AppText variant="title">Theme</AppText>
-                <AppText variant="bodySm" tone="secondary">
-                  {isDark ? "Dark mode is enabled." : "Light mode is enabled."}
-                </AppText>
-              </View>
-
-              <Switch
-                value={Boolean(isDark)}
-                onValueChange={() => {
-                  void toggleTheme();
-                }}
-                trackColor={{
-                  false: theme.colors.borderMuted,
-                  true: theme.colors.primary,
-                }}
-                thumbColor={theme.colors.bgSurfaceElevated}
-              />
-            </View>
-
-            <View style={settingRowStyle}>
-              <View style={settingTextWrapStyle}>
-                <AppText variant="title">Notifications</AppText>
-                <AppText variant="bodySm" tone="secondary">
-                  {notificationsEnabled
-                    ? "Job and application notifications are enabled."
-                    : "Job and application notifications are turned off."}
-                </AppText>
-              </View>
-
-              <Switch
-                value={notificationsEnabled}
-                onValueChange={() => {
-                  void handleToggleNotifications();
-                }}
-                disabled={
-                  savingNotifications || closingAccount || confirmCloseVisible
-                }
-                trackColor={{
-                  false: theme.colors.borderMuted,
-                  true: theme.colors.primary,
-                }}
-                thumbColor={theme.colors.bgSurfaceElevated}
-              />
-            </View>
-
-            <AppButton
-              title="Terms"
-              onPress={() => {
-                void handleOpenTerms();
-              }}
-              variant="secondary"
-              disabled={closingAccount || confirmCloseVisible}
+            <Setting
+              title="Theme"
+              subtitle={isDark ? "Dark mode enabled" : "Light mode enabled"}
+              right={<Switch value={isDark} onValueChange={toggleTheme} />}
             />
-          </View>
-        </AppCard>
 
-        <AppCard variant="default" padding="lg">
-          <View style={actionsWrapStyle}>
-            <AppText variant="titleLg">Account actions</AppText>
-
-            <AppText variant="bodySm" tone="secondary">
-              Closing your account disables employer access and signs you out.
-              Existing jobs, applications, and payment history may be retained.
-            </AppText>
-
-            {accountActionError ? (
-              <InlineAlert
-                tone="error"
-                title="Action failed"
-                message={accountActionError}
-              />
-            ) : null}
-
-            <AppButton
-              title={closingAccount ? "Closing account..." : "Close account"}
-              onPress={handleCloseAccount}
-              variant="destructive"
-              disabled={
-                closingAccount || savingNotifications || confirmCloseVisible
+            <Setting
+              title="Notifications"
+              subtitle="Job alerts & updates"
+              right={
+                <Switch
+                  value={notificationsEnabled}
+                  onValueChange={handleToggleNotifications}
+                  disabled={savingNotifications}
+                />
               }
             />
 
             <AppButton
-              title="Logout"
-              onPress={handleLogout}
+              title="Terms of Use"
+              onPress={handleOpenTerms}
               variant="secondary"
+            />
+          </View>
+        </AppCard>
+
+        {/* ACCOUNT */}
+        <AppCard padding="lg">
+          <View style={{ gap: theme.spacing.sm }}>
+            <AppText variant="titleLg">Account</AppText>
+
+            {accountActionError && (
+              <InlineAlert
+                tone="error"
+                title="Error"
+                message={accountActionError}
+              />
+            )}
+
+            <AppButton
+              title="Logout"
+              variant="secondary"
+              onPress={handleLogout}
+            />
+          </View>
+        </AppCard>
+
+        {/* 🔴 DANGER ZONE */}
+        <AppCard
+          padding="lg"
+          style={{
+            borderWidth: 1,
+            borderColor: theme.colors.error ?? "#E5484D",
+          }}
+        >
+          <View style={{ gap: theme.spacing.sm }}>
+            <AppText variant="titleLg" style={{ color: theme.colors.error }}>
+              Danger zone
+            </AppText>
+
+            <AppText tone="secondary" variant="bodySm">
+              Closing your account permanently disables employer access. This
+              action requires password confirmation.
+            </AppText>
+
+            <AppButton
+              title={closingAccount ? "Closing account..." : "Close account"}
+              variant="destructive"
+              onPress={handleCloseAccount}
               disabled={closingAccount || confirmCloseVisible}
             />
           </View>
         </AppCard>
       </View>
 
+      {/* CONFIRM MODAL (UNCHANGED LOGIC) */}
       <ConfirmPasswordModal
         visible={confirmCloseVisible}
         phoneNumber={profile.phone_number ?? null}
         title="Confirm password"
-        message="Enter your password to continue with employer account closure."
+        message="Enter your password to continue."
         confirmLabel="Continue"
         busyLabel="Checking..."
         onCancel={() => setConfirmCloseVisible(false)}
@@ -431,13 +315,24 @@ export default function EmployerProfileScreen() {
   );
 }
 
-function ProfileRow({ label, value }: { label: string; value: string }) {
+/* ---------------- SMALL COMPONENT ---------------- */
+
+function Setting({ title, subtitle, right }: any) {
   return (
-    <View style={{ gap: 4 }}>
-      <AppText variant="caption" tone="secondary" uppercase>
-        {label}
-      </AppText>
-      <AppText variant="title">{value}</AppText>
+    <View
+      style={{
+        flexDirection: "row",
+        justifyContent: "space-between",
+        alignItems: "center",
+      }}
+    >
+      <View style={{ flex: 1 }}>
+        <AppText variant="title">{title}</AppText>
+        <AppText tone="secondary" variant="bodySm">
+          {subtitle}
+        </AppText>
+      </View>
+      {right}
     </View>
   );
 }

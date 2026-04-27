@@ -6,7 +6,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { FeedNavigator } from "./FeedNavigator";
 import { SavedNavigator } from "./SavedNavigator";
 import MyApplicationsScreen from "../screens/applications/MyApplicationsScreen";
-import JobSeekerProfileScreen from "../screens/jobseeker/JobSeekerProfileScreen";
+import JobSeekerProfileScreen from "../screens/job/JobSeekerProfileScreen";
 import { useTheme } from "../theme/useTheme";
 
 export type JobSeekerTabsParamList = {

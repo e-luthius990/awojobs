@@ -13,7 +13,16 @@ type Props = {
   job: JobWithCoords;
   applied: boolean;
   onApply: () => void;
+  onViewApplication?: (job: JobWithCoords) => void;
 };
+
+type PrimaryAction =
+  | "expired"
+  | "applied"
+  | "call"
+  | "whatsapp"
+  | "apply"
+  | "unavailable";
 
 function parseExpiry(value: string | null | undefined): number | null {
   if (!value) return null;
@@ -21,7 +30,12 @@ function parseExpiry(value: string | null | undefined): number | null {
   return Number.isNaN(timestamp) ? null : timestamp;
 }
 
-export default function JobCardActions({ job, applied, onApply }: Props) {
+export default function JobCardActions({
+  job,
+  applied,
+  onApply,
+  onViewApplication,
+}: Props) {
   const { theme } = useTheme();
   const [busy, setBusy] = useState(false);
 
@@ -43,51 +57,48 @@ export default function JobCardActions({ job, applied, onApply }: Props) {
     return phoneRaw ? phoneRaw.replace("+", "") : null;
   }, [phoneRaw]);
 
-  const showCall = job.contact_method === "call" && !expired;
-  const showWhatsApp = job.contact_method === "whatsapp" && !expired;
-  const showApply = job.contact_method === "in_app" && !expired;
+  const primaryAction = useMemo<PrimaryAction>(() => {
+    if (expired) return "expired";
+    if (applied) return "applied";
+
+    if (job.contact_method === "call") {
+      return phoneRaw ? "call" : "unavailable";
+    }
+
+    if (job.contact_method === "whatsapp") {
+      return phoneNoPlus ? "whatsapp" : "unavailable";
+    }
+
+    if (job.contact_method === "in_app") {
+      return "apply";
+    }
+
+    return "unavailable";
+  }, [applied, expired, job.contact_method, phoneNoPlus, phoneRaw]);
 
   const containerStyle = useMemo<ViewStyle>(
     () => ({
-      gap: theme.spacing.sm,
+      gap: theme.spacing.xs,
     }),
-    [theme.spacing.sm],
+    [theme.spacing.xs],
   );
 
-  const rowStyle = useMemo<ViewStyle>(
+  const footerRowStyle = useMemo<ViewStyle>(
     () => ({
       flexDirection: "row",
       alignItems: "center",
+      justifyContent: "space-between",
       flexWrap: "wrap",
       gap: theme.spacing.sm,
     }),
     [theme.spacing.sm],
   );
 
-  const expiredWrapStyle = useMemo<ViewStyle>(
+  const actionWrapStyle = useMemo<ViewStyle>(
     () => ({
-      marginTop: theme.spacing.xs,
+      alignSelf: "flex-start",
     }),
-    [theme.spacing.xs],
-  );
-
-  const appliedWrapStyle = useMemo<ViewStyle>(
-    () => ({
-      minHeight: 40,
-      paddingHorizontal: theme.spacing.md,
-      borderRadius: theme.radius.pill,
-      backgroundColor: theme.colors.successSoft,
-      borderWidth: 1,
-      borderColor: theme.colors.verifiedBorder,
-      alignItems: "center",
-      justifyContent: "center",
-    }),
-    [
-      theme.colors.successSoft,
-      theme.colors.verifiedBorder,
-      theme.radius.pill,
-      theme.spacing.md,
-    ],
+    [],
   );
 
   const safeOpen = useCallback(
@@ -97,29 +108,23 @@ export default function JobCardActions({ job, applied, onApply }: Props) {
 
         if (!supported) {
           Alert.alert("Unavailable", unavailableMessage);
-          return;
+          return false;
         }
 
         await Linking.openURL(url);
+        return true;
       } catch {
         Alert.alert("Action failed", "Please try again.");
+        return false;
       }
     },
     [],
   );
 
   const callEmployer = useCallback(async () => {
-    if (!phoneRaw) {
-      Alert.alert(
-        "Phone number unavailable",
-        "This job does not have a callable number.",
-      );
-      return;
-    }
+    if (!phoneRaw || busy) return;
 
-    if (busy) return;
     setBusy(true);
-
     try {
       await safeOpen(
         `tel:${phoneRaw}`,
@@ -131,84 +136,126 @@ export default function JobCardActions({ job, applied, onApply }: Props) {
   }, [busy, phoneRaw, safeOpen]);
 
   const whatsappEmployer = useCallback(async () => {
-    if (!phoneNoPlus) {
-      Alert.alert(
-        "WhatsApp unavailable",
-        "This job does not have a valid WhatsApp number.",
-      );
-      return;
-    }
+    if (!phoneNoPlus || busy) return;
 
-    if (busy) return;
     setBusy(true);
 
     const msg = encodeURIComponent(
       `Hello, I saw your "${job.title}" job on AwoJobs and I’m interested.`,
     );
 
+    const appUrl = `whatsapp://send?phone=${phoneNoPlus}&text=${msg}`;
+    const webUrl = `https://wa.me/${phoneNoPlus}?text=${msg}`;
+
     try {
-      await safeOpen(
-        `https://wa.me/${phoneNoPlus}?text=${msg}`,
-        "WhatsApp is not available on this device.",
+      const canOpenApp = await Linking.canOpenURL(appUrl);
+
+      if (canOpenApp) {
+        await Linking.openURL(appUrl);
+        return;
+      }
+
+      await Linking.openURL(webUrl);
+    } catch {
+      Alert.alert(
+        "WhatsApp unavailable",
+        "We could not open WhatsApp on this device.",
       );
     } finally {
       setBusy(false);
     }
-  }, [busy, job.title, phoneNoPlus, safeOpen]);
+  }, [busy, job.title, phoneNoPlus]);
 
-  if (expired) {
-    return (
-      <View style={expiredWrapStyle}>
-        <StatusBadge label="Job expired" tone="error" />
-      </View>
-    );
-  }
+  const handleAppliedPress = useCallback(() => {
+    if (onViewApplication) {
+      onViewApplication(job);
+      return;
+    }
+
+    Alert.alert("Already applied", "You have already applied for this job.");
+  }, [job, onViewApplication]);
 
   return (
     <View style={containerStyle}>
-      <View style={rowStyle}>
-        {showCall ? (
-          <AppButton
-            title="Call"
-            onPress={callEmployer}
-            loading={busy}
-            disabled={busy}
-            variant="secondary"
-            size="sm"
-            fullWidth={false}
-          />
+      <View style={footerRowStyle}>
+        {primaryAction === "expired" ? (
+          <StatusBadge label="Expired" tone="error" />
         ) : null}
 
-        {showWhatsApp ? (
-          <AppButton
-            title="WhatsApp"
-            onPress={whatsappEmployer}
-            loading={busy}
-            disabled={busy}
-            variant="primary"
-            size="sm"
-            fullWidth={false}
-          />
-        ) : null}
+        <View style={actionWrapStyle}>
+          {primaryAction === "call" ? (
+            <AppButton
+              title="Call now"
+              onPress={callEmployer}
+              loading={busy}
+              disabled={busy}
+              variant="secondary"
+              size="sm"
+              fullWidth={false}
+            />
+          ) : null}
 
-        {showApply && !applied ? (
-          <AppButton
-            title="Apply"
-            onPress={onApply}
-            variant="primary"
-            size="sm"
-            fullWidth={false}
-          />
-        ) : null}
+          {primaryAction === "whatsapp" ? (
+            <AppButton
+              title="WhatsApp"
+              onPress={whatsappEmployer}
+              loading={busy}
+              disabled={busy}
+              variant="whatsapp"
+              size="sm"
+              fullWidth={false}
+            />
+          ) : null}
 
-        {showApply && applied ? (
-          <View style={appliedWrapStyle}>
-            <AppText variant="label" tone="success" weight="700">
-              Applied
-            </AppText>
-          </View>
-        ) : null}
+          {primaryAction === "apply" ? (
+            <AppButton
+              title="Apply now"
+              onPress={onApply}
+              variant="primary"
+              size="sm"
+              fullWidth={false}
+            />
+          ) : null}
+
+          {primaryAction === "applied" ? (
+            <AppButton
+              title="View application"
+              onPress={handleAppliedPress}
+              variant="secondary"
+              size="sm"
+              fullWidth={false}
+            />
+          ) : null}
+
+          {primaryAction === "expired" ? (
+            <AppButton
+              title="Expired"
+              onPress={() => {}}
+              disabled
+              variant="secondary"
+              size="sm"
+              fullWidth={false}
+            />
+          ) : null}
+
+          {primaryAction === "unavailable" ? (
+            <AppButton
+              title="Unavailable"
+              onPress={() => {}}
+              disabled
+              variant="secondary"
+              size="sm"
+              fullWidth={false}
+            />
+          ) : null}
+        </View>
       </View>
+
+      {primaryAction === "unavailable" ? (
+        <AppText variant="caption" tone="tertiary">
+          Contact method is not available for this job yet.
+        </AppText>
+      ) : null}
     </View>
   );
 }

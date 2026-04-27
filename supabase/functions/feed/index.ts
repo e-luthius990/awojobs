@@ -24,9 +24,12 @@ type FeedCursor = {
 
 type PremiumState = {
   active: boolean;
+  expired: boolean;
   scope: "local" | "national";
   requested_scope: "local" | "national";
   can_access_national: boolean;
+  expires_at: string | null;
+  days_remaining: number;
 };
 
 type FeedJob = {
@@ -35,6 +38,7 @@ type FeedJob = {
   description: string | null;
   pay_type: string | null;
   location_id: string | null;
+  district_id?: string | null;
   contact_method: string | null;
   contact_phone: string | null;
   created_at: string;
@@ -42,10 +46,28 @@ type FeedJob = {
   is_sponsored: boolean;
   sponsored_until: string | null;
   is_currently_sponsored: boolean;
+  posting_display_label?: string | null;
+  posting_resolution_level?: string | null;
+  posting_resolution_confidence?: number | null;
+  approximate_area_radius_meters?: number | null;
+  map_visibility_mode?: string | null;
+  geo_status?: string | null;
+  lat?: number | null;
+  lng?: number | null;
 };
 
 type FeedResponse = {
   premium: PremiumState;
+  effective_scope: "local" | "national";
+  resolution_level:
+    | "exact_local"
+    | "area_local"
+    | "district_only"
+    | "uganda_only"
+    | "outside_uganda"
+    | null;
+  display_location_label: string | null;
+  coverage_note: string | null;
   jobs: FeedJob[];
   nextCursor: FeedCursor | null;
   new_jobs_count: number;
@@ -60,8 +82,7 @@ type ErrorBody = {
 
 type JwtResult =
   | { kind: "guest" }
-  | { kind: "user"; user: { id: string } }
-  | { kind: "invalid_token" };
+  | { kind: "user"; user: { id: string } };
 
 type RateLimitResult =
   | { ok: true }
@@ -74,6 +95,37 @@ type RateLimitResult =
         | "RATE_LIMIT_LOG_FAILED";
       status: 500;
     };
+
+/* =====================================================
+   CLIENTS
+===================================================== */
+
+const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
+const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
+const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+
+function createServiceClient() {
+  return createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+    auth: { persistSession: false },
+  });
+}
+
+const supabaseAnon = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  auth: { persistSession: false },
+});
+
+function createRequestClient(req: Request) {
+  const authHeader = req.headers.get("authorization") ?? "";
+
+  return createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    auth: { persistSession: false },
+    global: {
+      headers: {
+        authorization: authHeader,
+      },
+    },
+  });
+}
 
 /* =====================================================
    HELPERS
@@ -124,12 +176,7 @@ function isIsoDateString(value: unknown): value is string {
 function normalizeIp(req: Request) {
   const forwarded = req.headers.get("x-forwarded-for") ?? "";
   const first = forwarded.split(",")[0]?.trim();
-
-  if (first && first.length <= 128) {
-    return first;
-  }
-
-  return "unknown";
+  return first && first.length <= 128 ? first : "unknown";
 }
 
 function normalizeLimit(limit: unknown) {
@@ -140,10 +187,7 @@ function normalizeLimit(limit: unknown) {
         ? Number(limit)
         : PAGE_SIZE_DEFAULT;
 
-  if (!Number.isFinite(raw)) {
-    return PAGE_SIZE_DEFAULT;
-  }
-
+  if (!Number.isFinite(raw)) return PAGE_SIZE_DEFAULT;
   return Math.min(Math.max(Math.trunc(raw), 1), PAGE_SIZE_MAX);
 }
 
@@ -190,10 +234,33 @@ function isValidFeedJob(value: unknown): value is FeedJob {
     (value.pay_type === null || typeof value.pay_type === "string") &&
     (value.location_id === null ||
       (typeof value.location_id === "string" && isValidUUID(value.location_id))) &&
+    (value.district_id === undefined ||
+      value.district_id === null ||
+      (typeof value.district_id === "string" && isValidUUID(value.district_id))) &&
     (value.contact_method === null || typeof value.contact_method === "string") &&
     (value.contact_phone === null || typeof value.contact_phone === "string") &&
     (value.expires_at === null || isIsoDateString(value.expires_at)) &&
-    (value.sponsored_until === null || isIsoDateString(value.sponsored_until))
+    (value.sponsored_until === null || isIsoDateString(value.sponsored_until)) &&
+    (value.posting_display_label === undefined ||
+      value.posting_display_label === null ||
+      typeof value.posting_display_label === "string") &&
+    (value.posting_resolution_level === undefined ||
+      value.posting_resolution_level === null ||
+      typeof value.posting_resolution_level === "string") &&
+    (value.posting_resolution_confidence === undefined ||
+      value.posting_resolution_confidence === null ||
+      typeof value.posting_resolution_confidence === "number") &&
+    (value.approximate_area_radius_meters === undefined ||
+      value.approximate_area_radius_meters === null ||
+      typeof value.approximate_area_radius_meters === "number") &&
+    (value.map_visibility_mode === undefined ||
+      value.map_visibility_mode === null ||
+      typeof value.map_visibility_mode === "string") &&
+    (value.geo_status === undefined ||
+      value.geo_status === null ||
+      typeof value.geo_status === "string") &&
+    (value.lat === undefined || value.lat === null || typeof value.lat === "number") &&
+    (value.lng === undefined || value.lng === null || typeof value.lng === "number")
   );
 }
 
@@ -204,9 +271,12 @@ function normalizePremiumState(
   if (!isPlainObject(value)) {
     return {
       active: false,
+      expired: false,
       scope: "local",
       requested_scope: requestedScopeFallback,
       can_access_national: false,
+      expires_at: null,
+      days_remaining: 0,
     };
   }
 
@@ -221,12 +291,47 @@ function normalizePremiumState(
   const scope =
     value.scope === "national" && canAccessNational ? "national" : "local";
 
+  const expires_at =
+    value.expires_at === null || typeof value.expires_at === "string"
+      ? value.expires_at
+      : null;
+
+  const days_remaining =
+    typeof value.days_remaining === "number" && Number.isFinite(value.days_remaining)
+      ? Math.max(0, Math.trunc(value.days_remaining))
+      : 0;
+
+  const expired =
+    typeof value.expired === "boolean"
+      ? value.expired
+      : !active && expires_at !== null;
+
   return {
     active,
+    expired,
     scope,
     requested_scope,
     can_access_national: canAccessNational,
+    expires_at,
+    days_remaining,
   };
+}
+
+function isValidResolutionLevel(
+  value: unknown,
+): value is
+  | "exact_local"
+  | "area_local"
+  | "district_only"
+  | "uganda_only"
+  | "outside_uganda" {
+  return (
+    value === "exact_local" ||
+    value === "area_local" ||
+    value === "district_only" ||
+    value === "uganda_only" ||
+    value === "outside_uganda"
+  );
 }
 
 function normalizeFeedResponse(
@@ -236,6 +341,32 @@ function normalizeFeedResponse(
   if (!isPlainObject(raw)) return null;
 
   const premium = normalizePremiumState(raw.premium, requestedScope);
+
+  const effectiveScope =
+    raw.effective_scope === "national" || raw.effective_scope === "local"
+      ? raw.effective_scope
+      : premium.scope;
+
+  const resolutionLevel =
+    raw.resolution_level === null
+      ? null
+      : isValidResolutionLevel(raw.resolution_level)
+        ? raw.resolution_level
+        : null;
+
+  const displayLocationLabel =
+    typeof raw.display_location_label === "string"
+      ? raw.display_location_label
+      : raw.display_location_label === null
+        ? null
+        : null;
+
+  const coverageNote =
+    typeof raw.coverage_note === "string"
+      ? raw.coverage_note
+      : raw.coverage_note === null
+        ? null
+        : null;
 
   const jobsRaw = raw.jobs;
   if (!Array.isArray(jobsRaw) || !jobsRaw.every(isValidFeedJob)) {
@@ -256,9 +387,33 @@ function normalizeFeedResponse(
 
   return {
     premium,
+    effective_scope: effectiveScope,
+    resolution_level: resolutionLevel,
+    display_location_label: displayLocationLabel,
+    coverage_note: coverageNote,
     jobs: jobsRaw,
     nextCursor: nextCursorRaw,
     new_jobs_count: newJobsCount,
+  };
+}
+
+function logContext(input: {
+  scope: "local" | "national";
+  isGuest: boolean;
+  hasCanonicalLocation: boolean;
+  hasDistrictFallback: boolean;
+  pageSize: number;
+  hasCursor: boolean;
+  ip: string;
+}) {
+  return {
+    scope: input.scope,
+    is_guest: input.isGuest,
+    has_canonical_location: input.hasCanonicalLocation,
+    has_district_fallback: input.hasDistrictFallback,
+    page_size: input.pageSize,
+    has_cursor: input.hasCursor,
+    ip: input.ip,
   };
 }
 
@@ -268,30 +423,33 @@ function normalizeFeedResponse(
 
 async function getUserFromJWT(req: Request): Promise<JwtResult> {
   const authHeader = req.headers.get("authorization");
-  if (!authHeader?.startsWith("Bearer ")) return { kind: "guest" };
+  if (!authHeader?.startsWith("Bearer ")) {
+    return { kind: "guest" };
+  }
 
   const token = authHeader.replace("Bearer ", "").trim();
-  if (!token) return { kind: "guest" };
-
-  const supabaseAnon = createClient(
-    Deno.env.get("SUPABASE_URL")!,
-    Deno.env.get("SUPABASE_ANON_KEY")!,
-    {
-      auth: { persistSession: false },
-    },
-  );
-
-  const { data, error } = await supabaseAnon.auth.getUser(token);
-
-  if (error) {
-    return { kind: "invalid_token" };
+  if (!token) {
+    return { kind: "guest" };
   }
 
-  if (!data?.user?.id) {
-    return { kind: "invalid_token" };
+  if (
+    token === SUPABASE_ANON_KEY ||
+    token === SUPABASE_SERVICE_ROLE_KEY ||
+    token.split(".").length !== 3
+  ) {
+    return { kind: "guest" };
   }
 
-  return { kind: "user", user: { id: data.user.id } };
+  try {
+    const { data, error } = await supabaseAnon.auth.getUser(token);
+    if (error || !data?.user?.id) {
+      return { kind: "guest" };
+    }
+
+    return { kind: "user", user: { id: data.user.id } };
+  } catch {
+    return { kind: "guest" };
+  }
 }
 
 /* =====================================================
@@ -299,7 +457,7 @@ async function getUserFromJWT(req: Request): Promise<JwtResult> {
 ===================================================== */
 
 async function enforceRateLimit(
-  supabase: ReturnType<typeof createClient>,
+  supabase: ReturnType<typeof createServiceClient>,
   ip: string,
   device_hash: string,
 ): Promise<RateLimitResult> {
@@ -365,6 +523,10 @@ async function enforceRateLimit(
   return { ok: true };
 }
 
+/* =====================================================
+   RPC ERROR MAPPING
+===================================================== */
+
 function mapRpcErrorToEdge(error: {
   message?: string;
   code?: string;
@@ -392,6 +554,36 @@ function mapRpcErrorToEdge(error: {
     );
   }
 
+  if (message === "VALIDATION_ERROR:location_id") {
+    return errorResponse(
+      400,
+      "VALIDATION_ERROR",
+      "Location ID is invalid.",
+      false,
+      { location_id: "Location ID is invalid." },
+    );
+  }
+
+  if (message === "VALIDATION_ERROR:district_id") {
+    return errorResponse(
+      400,
+      "VALIDATION_ERROR",
+      "District ID is invalid.",
+      false,
+      { district_id: "District ID is invalid." },
+    );
+  }
+
+  if (message === "VALIDATION_ERROR:resolved_location") {
+    return errorResponse(
+      400,
+      "VALIDATION_ERROR",
+      "Resolved location is invalid.",
+      false,
+      { resolved_location: "Resolved location is invalid." },
+    );
+  }
+
   if (message === "AUTH_REQUIRED") {
     return errorResponse(401, "AUTH_REQUIRED", "Please sign in again.", false);
   }
@@ -401,6 +593,15 @@ function mapRpcErrorToEdge(error: {
       404,
       "NOT_FOUND",
       "Your profile could not be loaded.",
+      false,
+    );
+  }
+
+  if (message === "OUTSIDE_SUPPORTED_COUNTRY") {
+    return errorResponse(
+      400,
+      "OUTSIDE_SUPPORTED_COUNTRY",
+      "This nearby feed is only supported inside Uganda.",
       false,
     );
   }
@@ -444,11 +645,17 @@ serve(async (req) => {
 
     const parsed = await req.json().catch(() => null);
     if (!isPlainObject(parsed)) {
-      return errorResponse(400, "INVALID_JSON", "Request body is invalid.", false);
+      return errorResponse(
+        400,
+        "INVALID_JSON",
+        "Request body is invalid.",
+        false,
+      );
     }
 
     const {
       location_id,
+      district_id,
       device_hash,
       limit,
       cursor_is_currently_sponsored,
@@ -483,39 +690,45 @@ serve(async (req) => {
       );
     }
 
-    const needsLocation = safeScope === "local";
     let safeLocationId: string | null = null;
+    let safeDistrictId: string | null = null;
 
-    if (needsLocation) {
-      if (
-        !location_id ||
-        typeof location_id !== "string" ||
-        !isValidUUID(location_id)
-      ) {
+    if (location_id !== undefined && location_id !== null) {
+      if (typeof location_id !== "string" || !isValidUUID(location_id)) {
         return errorResponse(
           400,
           "VALIDATION_ERROR",
-          "Location is invalid.",
+          "Location ID is invalid.",
           false,
-          { location_id: "Location is invalid." },
+          { location_id: "Location ID is invalid." },
         );
       }
 
       safeLocationId = location_id;
-    } else {
-      if (location_id !== null && location_id !== undefined) {
-        if (typeof location_id !== "string" || !isValidUUID(location_id)) {
-          return errorResponse(
-            400,
-            "VALIDATION_ERROR",
-            "Location is invalid.",
-            false,
-            { location_id: "Location is invalid." },
-          );
-        }
+    }
+
+    if (district_id !== undefined && district_id !== null) {
+      if (typeof district_id !== "string" || !isValidUUID(district_id)) {
+        return errorResponse(
+          400,
+          "VALIDATION_ERROR",
+          "District ID is invalid.",
+          false,
+          { district_id: "District ID is invalid." },
+        );
       }
 
-      safeLocationId = null;
+      safeDistrictId = district_id;
+    }
+
+    if (safeScope === "local" && !safeLocationId && !safeDistrictId) {
+      return errorResponse(
+        400,
+        "VALIDATION_ERROR",
+        "Resolved location is required for local feed.",
+        false,
+        { resolved_location: "Resolved location is required for local feed." },
+      );
     }
 
     let safeCursorIsCurrentlySponsored: boolean | null = null;
@@ -530,8 +743,7 @@ serve(async (req) => {
       cursor_id !== undefined;
 
     if (hasAnyCursor) {
-      const sponsoredOk =
-        typeof cursor_is_currently_sponsored === "boolean";
+      const sponsoredOk = typeof cursor_is_currently_sponsored === "boolean";
 
       const sponsoredUntilOk =
         cursor_sponsored_until === null ||
@@ -572,14 +784,7 @@ serve(async (req) => {
     }
 
     const pageSize = normalizeLimit(limit);
-
-    const service = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
-      {
-        auth: { persistSession: false },
-      },
-    );
+    const service = createServiceClient();
 
     const rateLimit = await enforceRateLimit(service, ip, device_hash);
     if (!rateLimit.ok) {
@@ -601,46 +806,23 @@ serve(async (req) => {
     }
 
     const userResult = await getUserFromJWT(req);
-    if (userResult.kind === "invalid_token") {
-      return errorResponse(
-        401,
-        "SESSION_EXPIRED",
-        "Your session has ended. Please sign in again.",
-        false,
-      );
-    }
 
-    if (needsLocation && safeLocationId) {
-      const { data: locationRow, error: locationError } = await service
-        .from("locations")
-        .select("country_norm")
-        .eq("id", safeLocationId)
-        .single();
+    const requestLog = logContext({
+      scope: safeScope,
+      isGuest: userResult.kind !== "user",
+      hasCanonicalLocation: safeLocationId !== null,
+      hasDistrictFallback: safeDistrictId !== null,
+      pageSize,
+      hasCursor: hasAnyCursor,
+      ip,
+    });
 
-      if (locationError) {
-        return errorResponse(
-          400,
-          "VALIDATION_ERROR",
-          "Location is invalid.",
-          false,
-          { location_id: "Location is invalid." },
-        );
-      }
+    const rpcClient =
+      userResult.kind === "user" ? createRequestClient(req) : supabaseAnon;
 
-      if (!locationRow || locationRow.country_norm !== "uganda") {
-        return errorResponse(
-          400,
-          "VALIDATION_ERROR",
-          "Location must be in Uganda.",
-          false,
-          { location_id: "Location must be in Uganda." },
-        );
-      }
-    }
-
-    const { data, error } = await service.rpc("get_feed", {
-      p_user_id: userResult.kind === "user" ? userResult.user.id : null,
+    const { data, error } = await rpcClient.rpc("get_feed", {
       p_location_id: safeLocationId,
+      p_district_id: safeDistrictId,
       p_requested_scope: safeScope,
       p_limit: pageSize,
       p_cursor_is_currently_sponsored: safeCursorIsCurrentlySponsored,
@@ -651,6 +833,7 @@ serve(async (req) => {
 
     if (error) {
       console.error("[get_feed RPC]", {
+        ...requestLog,
         message: error.message,
         code: error.code,
         details: error.details,
@@ -662,10 +845,17 @@ serve(async (req) => {
       return json({
         premium: {
           active: false,
-          scope: safeScope,
+          expired: false,
+          scope: "local",
           requested_scope: safeScope,
           can_access_national: false,
+          expires_at: null,
+          days_remaining: 0,
         },
+        effective_scope: safeScope === "national" ? "national" : "local",
+        resolution_level: null,
+        display_location_label: null,
+        coverage_note: null,
         jobs: [],
         nextCursor: null,
         new_jobs_count: 0,
@@ -674,7 +864,11 @@ serve(async (req) => {
 
     const normalized = normalizeFeedResponse(data, safeScope);
     if (!normalized) {
-      console.error("[get_feed invalid_response_shape]", data);
+      console.error("[get_feed invalid_response_shape]", {
+        ...requestLog,
+        data,
+      });
+
       return errorResponse(
         500,
         "INVALID_FEED_RESPONSE",

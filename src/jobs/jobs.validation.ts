@@ -25,8 +25,7 @@ export function validateJob(input: {
     throw new Error("Job title contains excessive repeated characters");
   }
 
-  const upperRatio =
-    title.replace(/[^A-Z]/g, "").length / title.length;
+  const upperRatio = title.replace(/[^A-Z]/g, "").length / title.length;
 
   if (upperRatio > 0.8 && title.length > 8) {
     throw new Error("Job title cannot be mostly all caps");
@@ -34,23 +33,21 @@ export function validateJob(input: {
 
   /* ---------------- DESCRIPTION ---------------- */
 
-  if (input.description) {
-    const desc = input.description.trim();
+  const desc = input.description?.trim() ?? "";
 
-    if (desc.length > 2000) {
-      throw new Error("Description cannot exceed 2000 characters");
-    }
+  if (desc.length > 2000) {
+    throw new Error("Description cannot exceed 2000 characters");
+  }
 
-    if (/https?:\/\//i.test(desc)) {
-      throw new Error("Links are not allowed in description");
-    }
+  if (/https?:\/\//i.test(desc)) {
+    throw new Error("Links are not allowed in description");
   }
 
   /* ---------------- PAY TYPE ---------------- */
 
   const payType = input.pay_type?.toLowerCase();
 
-  if (!["daily", "weekly", "monthly"].includes(payType)) {
+  if (!["daily", "weekly", "monthly", "not_specified"].includes(payType)) {
     throw new Error("Invalid pay type");
   }
 
@@ -71,10 +68,12 @@ export function validateJob(input: {
       throw new Error("Contact phone is required");
     }
 
-    const normalized = phone.replace(/\s+/g, "");
+    const digits = phone.replace(/\D/g, "");
 
     const isValidUgPhone =
-      /^(\+256\d{9}|0\d{9})$/.test(normalized);
+      /^256\d{9}$/.test(digits) ||
+      /^0\d{9}$/.test(digits) ||
+      /^7\d{8}$/.test(digits);
 
     if (!isValidUgPhone) {
       throw new Error("Invalid Uganda phone number format");

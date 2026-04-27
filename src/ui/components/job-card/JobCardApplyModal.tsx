@@ -55,8 +55,8 @@ export default function JobCardApplyModal({
       paddingHorizontal: theme.spacing.lg,
       paddingTop: theme.spacing.md,
       paddingBottom: Math.max(
-        theme.spacing.xl,
-        insets.bottom + theme.spacing.md,
+        theme.spacing.lg,
+        insets.bottom + theme.spacing.sm,
       ),
       borderTopWidth: theme.hairlineWidth,
       borderTopColor: theme.colors.borderDefault,
@@ -71,7 +71,7 @@ export default function JobCardApplyModal({
       theme.shadows.level3,
       theme.spacing.lg,
       theme.spacing.md,
-      theme.spacing.xl,
+      theme.spacing.sm,
     ],
   );
 
@@ -85,7 +85,7 @@ export default function JobCardApplyModal({
 
   const handleStyle = useMemo<ViewStyle>(
     () => ({
-      width: 44,
+      width: 40,
       height: 5,
       borderRadius: theme.radius.pill,
       backgroundColor: theme.colors.borderStrong,
@@ -99,9 +99,9 @@ export default function JobCardApplyModal({
       alignItems: "flex-start",
       justifyContent: "space-between",
       gap: theme.spacing.md,
-      marginBottom: theme.spacing.lg,
+      marginBottom: theme.spacing.md,
     }),
-    [theme.spacing.lg, theme.spacing.md],
+    [theme.spacing.md],
   );
 
   const headerStyle = useMemo<ViewStyle>(
@@ -114,8 +114,8 @@ export default function JobCardApplyModal({
 
   const closeButtonStyle = useMemo<ViewStyle>(
     () => ({
-      width: 40,
-      height: 40,
+      width: 36,
+      height: 36,
       borderRadius: theme.radius.pill,
       alignItems: "center",
       justifyContent: "center",
@@ -130,10 +130,10 @@ export default function JobCardApplyModal({
     ],
   );
 
-  const infoBoxStyle = useMemo<ViewStyle>(
+  const noteStyle = useMemo<ViewStyle>(
     () => ({
       paddingHorizontal: theme.spacing.md,
-      paddingVertical: theme.spacing.md,
+      paddingVertical: theme.spacing.sm,
       borderRadius: theme.radius.lg,
       backgroundColor: theme.colors.bgSurfaceMuted,
       borderWidth: 1,
@@ -145,23 +145,24 @@ export default function JobCardApplyModal({
       theme.colors.borderMuted,
       theme.radius.lg,
       theme.spacing.md,
+      theme.spacing.sm,
       theme.spacing.xs,
     ],
   );
 
   const actionsStyle = useMemo<ViewStyle>(
     () => ({
-      marginTop: theme.spacing.lg,
-      gap: theme.spacing.sm,
+      marginTop: theme.spacing.md,
+      gap: theme.spacing.xs,
     }),
-    [theme.spacing.lg, theme.spacing.sm],
+    [theme.spacing.md, theme.spacing.xs],
   );
 
   const cancelWrapStyle = useMemo<ViewStyle>(
     () => ({
       alignItems: "center",
       justifyContent: "center",
-      minHeight: 44,
+      minHeight: 42,
     }),
     [],
   );
@@ -197,7 +198,7 @@ export default function JobCardApplyModal({
         <View style={rootStyle}>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Close application form"
+            accessibilityLabel="Close application confirmation"
             style={backdropTapAreaStyle}
             onPress={handleClose}
           />
@@ -209,16 +210,16 @@ export default function JobCardApplyModal({
 
             <View style={headerRowStyle}>
               <View style={headerStyle}>
-                <AppText variant="h3">Apply for this job</AppText>
+                <AppText variant="h3">Confirm application</AppText>
                 <AppText variant="bodySm" tone="secondary">
-                  Your profile name and phone number will be shared with the
+                  Your saved name and phone number will be shared with the
                   employer.
                 </AppText>
               </View>
 
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel="Close application form"
+                accessibilityLabel="Close application confirmation"
                 disabled={submitting}
                 onPress={handleClose}
                 style={({ pressed }) => [
@@ -240,20 +241,18 @@ export default function JobCardApplyModal({
               </Pressable>
             </View>
 
-            <View style={infoBoxStyle}>
+            <View style={noteStyle}>
               <AppText variant="bodySm">
-                When you submit, AwoJobs sends your saved profile details to the
-                employer.
+                Your application is sent instantly to the employer.
               </AppText>
               <AppText variant="caption" tone="secondary">
-                Update your profile first if your name or phone number is
-                outdated.
+                Update your profile first if those details are outdated.
               </AppText>
             </View>
 
             <View style={actionsStyle}>
               <AppButton
-                title={submitting ? "Sending..." : "Submit application"}
+                title={submitting ? "Applying..." : "Apply now"}
                 onPress={() => {
                   void handleSubmit();
                 }}

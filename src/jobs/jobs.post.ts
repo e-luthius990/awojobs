@@ -1,3 +1,13 @@
+/**
+ * LEGACY PAYMENT-LED POSTING FLOW
+ *
+ * This module belongs to the old draft -> payment intent flow.
+ * It is not the active posting path for the current location-based feed flow.
+ *
+ * Current posting should use the RPC-based create_job_with_detected_location path.
+ * Do not use this file for nearby-feed posting tests.
+ */
+
 import { supabase } from "../core/supabase";
 import { validateJob } from "./jobs.validation";
 import { ENV } from "../core/config";
@@ -138,7 +148,6 @@ export async function initiateJobPost(params: {
   location_id: string;
   sponsorship?: "sponsored_day" | "sponsored_week" | "sponsored_month";
 }) {
-  // 1️⃣ Create draft
   const draftId = await createDraftJob({
     title: params.title,
     description: params.description,
@@ -148,7 +157,6 @@ export async function initiateJobPost(params: {
     location_id: params.location_id,
   });
 
-  // 2️⃣ Create payment intent
   return await createJobPaymentIntent({
     draft_id: draftId,
     sponsorship: params.sponsorship,

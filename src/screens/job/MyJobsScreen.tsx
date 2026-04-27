@@ -19,6 +19,7 @@ import { useFocusEffect, useNavigation } from "@react-navigation/native";
 
 import { supabase } from "../../core/supabase";
 import { fetchMyJobs } from "../../jobs/jobs.mine";
+import { publishJob } from "../../jobs/postJob.service";
 import type { EmployerRootStackParamList } from "../../navigation/EmployerNavigator";
 
 import { useTheme } from "../../theme/useTheme";
@@ -33,7 +34,14 @@ import { SkeletonCard } from "../../ui/Skeleton";
 
 type EmployerNavProp = NativeStackNavigationProp<EmployerRootStackParamList>;
 
-type JobStatus = "draft" | "pending_payment" | "active" | "expired" | "closed";
+type JobStatus =
+  | "draft"
+  | "pending_payment"
+  | "active"
+  | "expired"
+  | "closed"
+  | "flagged"
+  | "deleted";
 
 type EmployerJob = {
   id: string;
@@ -45,6 +53,15 @@ type EmployerJob = {
   is_sponsored: boolean | null;
   sponsored_until: string | null;
   created_at: string;
+  district_id?: string | null;
+  posting_resolution_level?:
+    | "exact_local"
+    | "district_only"
+    | "uganda_only"
+    | "outside_uganda"
+    | null;
+  posting_display_label?: string | null;
+  posting_accuracy_meters?: number | null;
 };
 
 function daysLeft(ts?: string | null) {
@@ -66,6 +83,8 @@ function statusLabel(s: JobStatus) {
   if (s === "draft") return "Draft";
   if (s === "active") return "Active";
   if (s === "expired") return "Expired";
+  if (s === "flagged") return "Flagged";
+  if (s === "deleted") return "Deleted";
   return "Closed";
 }
 
@@ -76,6 +95,8 @@ function statusTone(
   if (s === "pending_payment") return "warning";
   if (s === "expired") return "error";
   if (s === "draft") return "info";
+  if (s === "flagged") return "warning";
+  if (s === "deleted") return "default";
   return "default";
 }
 
@@ -83,6 +104,16 @@ function isBoostActive(job: EmployerJob) {
   if (!job.is_sponsored) return false;
   if (!job.sponsored_until) return false;
   return new Date(job.sponsored_until).getTime() > Date.now();
+}
+
+function canPublishDraft(job: EmployerJob) {
+  if (job.status !== "draft") return false;
+  if (!job.district_id) return false;
+
+  return (
+    job.posting_resolution_level === "exact_local" ||
+    job.posting_resolution_level === "district_only"
+  );
 }
 
 function QuickStat({ label, value }: { label: string; value: number }) {
@@ -128,7 +159,7 @@ export default function MyJobsScreen() {
 
     try {
       const data = await fetchMyJobs();
-      setJobs(Array.isArray(data) ? data : []);
+      setJobs(Array.isArray(data) ? (data as EmployerJob[]) : []);
     } catch {
       setError("Could not load your jobs.");
       if (spinner) {
@@ -279,6 +310,46 @@ export default function MyJobsScreen() {
       },
       "Could not close job.",
     );
+  }
+
+  async function publishDraft(job: EmployerJob) {
+    if (busyIds.has(job.id)) return;
+
+    setBusy(job.id, true);
+    setError(null);
+
+    try {
+      const result = await publishJob(job.id);
+
+      if (!result.ok) {
+        setError(result.message || "Could not publish draft.");
+        return;
+      }
+
+      setJobs((cur) =>
+        cur.map((j) =>
+          j.id === job.id
+            ? {
+                ...j,
+                status: "active",
+                expires_at: result.job.expires_at,
+                posting_display_label:
+                  result.job.posting_display_label ??
+                  j.posting_display_label ??
+                  null,
+                posting_resolution_level:
+                  result.job.posting_resolution_level ??
+                  j.posting_resolution_level ??
+                  null,
+              }
+            : j,
+        ),
+      );
+
+      toast("Job published");
+    } finally {
+      setBusy(job.id, false);
+    }
   }
 
   function renewJob(job: EmployerJob) {
@@ -497,6 +568,7 @@ export default function MyJobsScreen() {
 
     const boostActive = isBoostActive(item);
     const isBusy = busyIds.has(item.id);
+    const draftPublishReady = canPublishDraft(item);
 
     const shouldPromptBoost =
       item.status === "active" && !boostActive && views < 20;
@@ -534,9 +606,21 @@ export default function MyJobsScreen() {
                   {boostActive ? (
                     <StatusBadge label="Boost Active" tone="sponsored" />
                   ) : null}
+                  {item.status === "draft" &&
+                  item.posting_resolution_level === "district_only" ? (
+                    <StatusBadge label="District fallback" tone="warning" />
+                  ) : null}
                 </View>
               </View>
             </View>
+
+            {item.posting_display_label ? (
+              <AppText variant="bodySm" tone="secondary">
+                {item.status === "draft"
+                  ? `Draft location: ${item.posting_display_label}`
+                  : `Location: ${item.posting_display_label}`}
+              </AppText>
+            ) : null}
 
             {item.status === "active" && jobExpires !== null ? (
               <AppText
@@ -572,6 +656,14 @@ export default function MyJobsScreen() {
                 {apps} applications
               </AppText>
             </View>
+
+            {item.status === "draft" && !draftPublishReady ? (
+              <InlineAlert
+                tone="warning"
+                title="Draft not ready to publish"
+                message="This draft is still missing a usable posting location or district."
+              />
+            ) : null}
 
             {shouldPromptBoost || shouldPromptExtend ? (
               <InlineAlert
@@ -654,6 +746,15 @@ export default function MyJobsScreen() {
                     disabled={isBusy}
                   />
                   <AppButton
+                    title="Publish"
+                    onPress={() => void publishDraft(item)}
+                    variant="primary"
+                    size="sm"
+                    fullWidth={false}
+                    disabled={isBusy || !draftPublishReady}
+                    loading={isBusy}
+                  />
+                  <AppButton
                     title="Delete"
                     onPress={() =>
                       Alert.alert(
@@ -675,7 +776,6 @@ export default function MyJobsScreen() {
                     size="sm"
                     fullWidth={false}
                     disabled={isBusy}
-                    loading={isBusy}
                   />
                 </>
               ) : null}
@@ -695,8 +795,8 @@ export default function MyJobsScreen() {
           <StatusBadge label="Overview" tone="info" />
           <AppText variant="h3">My Jobs</AppText>
           <AppText variant="bodySm" tone="secondary">
-            Track performance, renew expired posts, and manage your active
-            listings.
+            Track performance, renew expired posts, publish drafts, and manage
+            your active listings.
           </AppText>
         </View>
       </AppCard>
@@ -744,7 +844,7 @@ export default function MyJobsScreen() {
         <InlineAlert
           tone="info"
           title="Drafts available"
-          message={`${draftCount} draft job${draftCount > 1 ? "s are" : " is"} waiting to be completed.`}
+          message={`${draftCount} draft job${draftCount > 1 ? "s are" : " is"} ready for review and publishing.`}
         />
       ) : null}
 

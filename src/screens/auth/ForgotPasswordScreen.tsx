@@ -12,7 +12,8 @@ import {
   ScrollView,
   View,
   Pressable,
-  Image,
+  TextInput,
+  type TextStyle,
   type ViewStyle,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
@@ -22,8 +23,6 @@ import { requestPasswordReset } from "../../auth/auth.service";
 import { useTheme } from "../../theme/useTheme";
 import { AppScreen } from "../../ui/AppScreen";
 import { AppText } from "../../ui/AppText";
-import { AppInput } from "../../ui/AppInput";
-import { AppButton } from "../../ui/AppButton";
 import { InlineAlert } from "../../ui/InlineAlert";
 import { AppEntrance } from "../../ui/AppEntrance";
 
@@ -82,164 +81,136 @@ export default function ForgotPasswordScreen() {
   const contentStyle = useMemo<ViewStyle>(
     () => ({
       flexGrow: 1,
-      paddingTop: theme.spacing.md,
-      paddingBottom: theme.spacing.lg,
       paddingHorizontal: theme.spacing.screenX,
+      paddingTop: 28,
+      paddingBottom: 32,
     }),
-    [theme.spacing.lg, theme.spacing.md, theme.spacing.screenX],
+    [theme.spacing.screenX],
   );
 
-  const brandSectionStyle = useMemo<ViewStyle>(
+  const innerWrapStyle = useMemo<ViewStyle>(
     () => ({
-      marginBottom: theme.spacing.xl,
+      width: "100%",
+      maxWidth: 440,
+      alignSelf: "center",
     }),
-    [theme.spacing.xl],
+    [],
   );
 
-  const brandRowStyle = useMemo<ViewStyle>(
+  const headerStyle = useMemo<ViewStyle>(
     () => ({
+      alignItems: "center",
+      marginBottom: 24,
+      paddingTop: 12,
+    }),
+    [],
+  );
+
+  const backButtonStyle = useMemo<ViewStyle>(
+    () => ({
+      position: "absolute",
+      top: 0,
+      left: 0,
+      width: 40,
+      height: 40,
+      borderRadius: 20,
+      alignItems: "center",
+      justifyContent: "center",
+      zIndex: 2,
+    }),
+    [],
+  );
+
+  const titleStyle = useMemo<TextStyle>(
+    () => ({
+      textAlign: "center",
+      marginTop: 44,
+      marginBottom: 10,
+      fontSize: 30,
+      lineHeight: 36,
+      letterSpacing: -0.5,
+      color: theme.colors.textPrimary,
+    }),
+    [theme.colors.textPrimary],
+  );
+
+  const subtitleStyle = useMemo<TextStyle>(
+    () => ({
+      textAlign: "center",
+      maxWidth: 320,
+      lineHeight: 23,
+      fontSize: 16,
+    }),
+    [],
+  );
+
+  const formStyle = useMemo<ViewStyle>(
+    () => ({
+      width: "100%",
+    }),
+    [],
+  );
+
+  const fieldBlockStyle = useMemo<ViewStyle>(
+    () => ({
+      marginBottom: 12,
+    }),
+    [],
+  );
+
+  const inputShellStyle = useMemo<ViewStyle>(
+    () => ({
+      minHeight: 58,
+      borderRadius: 16,
+      borderWidth: 1,
+      borderColor: theme.colors.borderDefault,
+      backgroundColor: theme.colors.bgSurface,
       flexDirection: "row",
       alignItems: "center",
-      paddingTop: theme.spacing.xs,
-      paddingHorizontal: 2,
+      paddingHorizontal: 16,
     }),
-    [theme.spacing.xs],
+    [theme.colors.borderDefault, theme.colors.bgSurface],
   );
 
-  const navMarkStyle = useMemo<ViewStyle>(
+  const inputErrorShellStyle = useMemo<ViewStyle>(
     () => ({
-      width: 44,
-      height: 44,
-      borderRadius: 16,
-      backgroundColor: theme.colors.bgSurface,
-      borderWidth: 1,
-      borderColor: theme.colors.borderDefault,
-      alignItems: "center",
-      justifyContent: "center",
-      marginRight: theme.spacing.md,
-      ...theme.shadows.level1,
+      borderColor: theme.colors.error,
     }),
-    [
-      theme.colors.bgSurface,
-      theme.colors.borderDefault,
-      theme.shadows.level1,
-      theme.spacing.md,
-    ],
+    [theme.colors.error],
   );
 
-  const brandMarkStyle = useMemo<ViewStyle>(
-    () => ({
-      width: 52,
-      height: 52,
-      borderRadius: 16,
-      backgroundColor: theme.colors.bgSurface,
-      borderWidth: 1,
-      borderColor: theme.colors.borderDefault,
-      alignItems: "center",
-      justifyContent: "center",
-      marginRight: theme.spacing.md,
-      ...theme.shadows.level1,
-    }),
-    [
-      theme.colors.bgSurface,
-      theme.colors.borderDefault,
-      theme.shadows.level1,
-      theme.spacing.md,
-    ],
-  );
-
-  const brandLogoStyle = useMemo<ViewStyle>(
-    () => ({
-      width: 72,
-      height: 72,
-    }),
-    [],
-  );
-
-  const brandTextWrapStyle = useMemo<ViewStyle>(
+  const inputStyle = useMemo<TextStyle>(
     () => ({
       flex: 1,
+      color: theme.colors.textPrimary,
+      fontSize: 16,
+      paddingVertical: Platform.OS === "ios" ? 16 : 12,
     }),
-    [],
+    [theme.colors.textPrimary],
   );
 
-  const brandSubtitleStyle = useMemo<ViewStyle>(
+  const buttonStyle = useMemo<ViewStyle>(
     () => ({
-      marginTop: theme.spacing.xxs,
-    }),
-    [theme.spacing.xxs],
-  );
-
-  const bodyWrapStyle = useMemo<ViewStyle>(
-    () => ({
-      flex: 1,
-      justifyContent: "center",
-      paddingTop: theme.spacing.lg,
-    }),
-    [theme.spacing.lg],
-  );
-
-  const formShellStyle = useMemo<ViewStyle>(
-    () => ({
-      borderRadius: 28,
-      backgroundColor: theme.colors.bgSurfaceElevated,
-      borderWidth: 1,
-      borderColor: theme.colors.borderDefault,
-      padding: theme.spacing.lg,
-      ...theme.shadows.level2,
-    }),
-    [
-      theme.colors.bgSurfaceElevated,
-      theme.colors.borderDefault,
-      theme.shadows.level2,
-      theme.spacing.lg,
-    ],
-  );
-
-  const formTopStyle = useMemo<ViewStyle>(
-    () => ({
-      marginBottom: theme.spacing.md,
-    }),
-    [theme.spacing.md],
-  );
-
-  const formTopHintStyle = useMemo<ViewStyle>(
-    () => ({
-      marginTop: 6,
-    }),
-    [],
-  );
-
-  const fieldGroupStyle = useMemo<ViewStyle>(
-    () => ({
-      marginBottom: theme.spacing.sm,
-    }),
-    [theme.spacing.sm],
-  );
-
-  const buttonWrapStyle = useMemo<ViewStyle>(
-    () => ({
-      marginTop: theme.spacing.md,
-    }),
-    [theme.spacing.md],
-  );
-
-  const footerStyle = useMemo<ViewStyle>(
-    () => ({
-      alignItems: "center",
-      paddingTop: theme.spacing.sm,
-    }),
-    [theme.spacing.sm],
-  );
-
-  const helperRowStyle = useMemo<ViewStyle>(
-    () => ({
-      flexDirection: "row",
+      height: 56,
+      borderRadius: 16,
       alignItems: "center",
       justifyContent: "center",
-      flexWrap: "wrap",
+      marginTop: 8,
+      backgroundColor: canSubmit
+        ? theme.colors.primary
+        : theme.colors.borderDefault,
     }),
-    [],
+    [canSubmit, theme.colors.primary, theme.colors.borderDefault],
+  );
+
+  const buttonTextStyle = useMemo<TextStyle>(
+    () => ({
+      color: canSubmit ? theme.colors.textInverse : theme.colors.textSecondary,
+      fontSize: 16,
+      fontWeight: "700",
+      letterSpacing: 0.2,
+    }),
+    [canSubmit, theme.colors.textInverse, theme.colors.textSecondary],
   );
 
   const handlePhoneChange = useCallback((value: string) => {
@@ -287,10 +258,6 @@ export default function ForgotPasswordScreen() {
     }
   }, [phone, loading, navigation]);
 
-  const handleBackToLogin = useCallback(() => {
-    navigation.popToTop();
-  }, [navigation]);
-
   return (
     <AppScreen scroll={false} keyboardAvoiding={false} padded={false}>
       <KeyboardAvoidingView
@@ -306,88 +273,70 @@ export default function ForgotPasswordScreen() {
           showsVerticalScrollIndicator={false}
           bounces={false}
         >
-          <AppEntrance>
-            <View style={brandSectionStyle}>
-              <View style={brandRowStyle}>
+          <View style={innerWrapStyle}>
+            <AppEntrance>
+              <View style={headerStyle}>
                 <Pressable
                   onPress={() => navigation.goBack()}
                   accessibilityRole="button"
                   accessibilityLabel="Go back"
                   style={({ pressed }) => [
-                    navMarkStyle,
-                    pressed ? { opacity: 0.8 } : null,
+                    backButtonStyle,
+                    pressed ? { opacity: 0.72 } : null,
                   ]}
                 >
                   <Ionicons
                     name="chevron-back"
-                    size={22}
+                    size={24}
                     color={theme.colors.textPrimary}
                   />
                 </Pressable>
 
-                <View style={brandMarkStyle}>
-                  <Image
-                    source={require("../../../assets/logo.png")}
-                    style={brandLogoStyle}
-                    resizeMode="contain"
-                  />
-                </View>
+                <AppText variant="h2" weight="700" style={titleStyle}>
+                  Reset password
+                </AppText>
 
-                <View style={brandTextWrapStyle}>
-                  <AppText variant="labelLg" weight="700">
-                    AwoJobs
-                  </AppText>
-                  <AppText
-                    variant="caption"
-                    tone="secondary"
-                    style={brandSubtitleStyle}
-                  >
-                    Reset your password
-                  </AppText>
-                </View>
+                <AppText variant="body" tone="secondary" style={subtitleStyle}>
+                  Enter your phone number to receive a reset code.
+                </AppText>
               </View>
-            </View>
-          </AppEntrance>
+            </AppEntrance>
 
-          <AppEntrance delay={40}>
-            <View style={bodyWrapStyle}>
-              <View style={formShellStyle}>
-                <View style={formTopStyle}>
-                  <AppText variant="titleLg">Reset details</AppText>
-                  <AppText
-                    variant="bodySm"
-                    tone="secondary"
-                    style={formTopHintStyle}
+            <AppEntrance delay={40}>
+              <View style={formStyle}>
+                <View style={fieldBlockStyle}>
+                  <View
+                    style={[
+                      inputShellStyle,
+                      phoneError ? inputErrorShellStyle : null,
+                    ]}
                   >
-                    Enter your phone number to receive a reset code.
-                  </AppText>
+                    <TextInput
+                      placeholder="+256 7XX XXX XXX"
+                      placeholderTextColor={theme.colors.textTertiary}
+                      keyboardType="phone-pad"
+                      autoCorrect={false}
+                      autoCapitalize="none"
+                      textContentType="telephoneNumber"
+                      value={phone}
+                      onChangeText={handlePhoneChange}
+                      onBlur={() => setPhoneTouched(true)}
+                      returnKeyType="done"
+                      onSubmitEditing={handleReset}
+                      style={inputStyle}
+                    />
+                  </View>
+
+                  {phoneError ? (
+                    <View style={{ marginTop: 8 }}>
+                      <AppText variant="caption" tone="error">
+                        {phoneError}
+                      </AppText>
+                    </View>
+                  ) : null}
                 </View>
 
-                <View style={fieldGroupStyle}>
-                  <AppInput
-                    label="Phone number"
-                    placeholder="+256 7XX XXX XXX"
-                    keyboardType="phone-pad"
-                    autoCorrect={false}
-                    autoCapitalize="none"
-                    textContentType="telephoneNumber"
-                    value={phone}
-                    onChangeText={handlePhoneChange}
-                    onBlur={() => setPhoneTouched(true)}
-                    returnKeyType="done"
-                    onSubmitEditing={handleReset}
-                    leftSlot={
-                      <Ionicons
-                        name="call-outline"
-                        size={18}
-                        color={theme.colors.textSecondary}
-                      />
-                    }
-                    error={phoneError ?? undefined}
-                  />
-                </View>
-
-                <View style={fieldGroupStyle}>
+                <View style={fieldBlockStyle}>
                   {message ? (
                     <InlineAlert tone={messageTone} message={message} />
                   ) : (
@@ -398,33 +347,20 @@ export default function ForgotPasswordScreen() {
                   )}
                 </View>
 
-                <View style={buttonWrapStyle}>
-                  <AppButton
-                    title="Send Code"
-                    onPress={handleReset}
-                    loading={loading}
-                    disabled={!canSubmit}
-                    variant="primary"
-                  />
-                </View>
+                <Pressable
+                  onPress={handleReset}
+                  disabled={!canSubmit}
+                  style={({ pressed }) => [
+                    buttonStyle,
+                    pressed && canSubmit ? { opacity: 0.9 } : null,
+                  ]}
+                >
+                  <AppText style={buttonTextStyle}>
+                    {loading ? "Sending..." : "Send Code"}
+                  </AppText>
+                </Pressable>
               </View>
-            </View>
-          </AppEntrance>
-
-          <View style={footerStyle}>
-            <Pressable
-              onPress={handleBackToLogin}
-              style={({ pressed }) => [pressed ? { opacity: 0.72 } : null]}
-            >
-              <View style={helperRowStyle}>
-                <AppText variant="bodySm" tone="secondary">
-                  Remembered your password?{" "}
-                </AppText>
-                <AppText variant="bodySm" tone="link" weight="700">
-                  Sign In
-                </AppText>
-              </View>
-            </Pressable>
+            </AppEntrance>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>

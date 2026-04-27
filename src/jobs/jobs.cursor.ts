@@ -5,6 +5,19 @@ export type JobsCursor = {
   id: string;
 };
 
+function isValidUuid(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      value,
+    )
+  );
+}
+
+function isValidIsoDateString(value: unknown): value is string {
+  return typeof value === "string" && !Number.isNaN(Date.parse(value));
+}
+
 /* ---------------------------------------------
    ENCODE (URL SAFE BASE64)
 ---------------------------------------------- */
@@ -17,7 +30,7 @@ export function encodeCursor(cursor: JobsCursor): string {
    DECODE (FAIL CLOSED)
 ---------------------------------------------- */
 export function decodeCursor(
-  cursor?: string | null
+  cursor?: string | null,
 ): JobsCursor | null {
   if (!cursor || typeof cursor !== "string") {
     return null;
@@ -28,14 +41,19 @@ export function decodeCursor(
 
     if (
       typeof parsed !== "object" ||
+      parsed === null ||
       typeof parsed.is_currently_sponsored !== "boolean" ||
       !(
         parsed.sponsored_until === null ||
-        typeof parsed.sponsored_until === "string"
+        isValidIsoDateString(parsed.sponsored_until)
       ) ||
-      typeof parsed.created_at !== "string" ||
-      typeof parsed.id !== "string"
+      !isValidIsoDateString(parsed.created_at) ||
+      !isValidUuid(parsed.id)
     ) {
+      return null;
+    }
+
+    if (!parsed.is_currently_sponsored && parsed.sponsored_until !== null) {
       return null;
     }
 

@@ -19,10 +19,16 @@ const config: ExpoConfig = {
   android: {
     package: "com.awojobs.app",
     googleServicesFile: "./google-services.json",
+    config: {
+      googleMaps: {
+        apiKey: process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY,
+      },
+    },
     adaptiveIcon: {
       foregroundImage: "./assets/adaptive-icon.png",
       backgroundColor: "#F7F9FC",
     },
+    permissions: ["ACCESS_COARSE_LOCATION", "ACCESS_FINE_LOCATION"],
   },
 
   plugins: [
@@ -33,6 +39,13 @@ const config: ExpoConfig = {
       {
         icon: "./assets/icon.png",
         color: "#0F172A",
+      },
+    ],
+    [
+      "expo-location",
+      {
+        locationWhenInUsePermission:
+          "AwoJobs uses your current device location to show jobs near your area.",
       },
     ],
   ],
@@ -48,6 +61,7 @@ const config: ExpoConfig = {
   extra: {
     SUPABASE_URL: process.env.EXPO_PUBLIC_SUPABASE_URL,
     SUPABASE_ANON_KEY: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY,
+    GOOGLE_MAPS_API_KEY: process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY,
     eas: {
       projectId: "3381d51f-b9a7-4ae7-a442-77f7e9986e1d",
     },

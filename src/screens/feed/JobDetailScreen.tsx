@@ -50,7 +50,8 @@ function formatPayType(value?: string | null) {
     .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
-function formatContactMethod(value: string) {
+function formatContactMethod(value?: string | null) {
+  if (!value) return "Not specified";
   if (value === "in_app") return "In app";
   if (value === "walk_in") return "Walk-in";
   if (value === "call") return "Call";
@@ -68,15 +69,19 @@ function buildShareText(job: Job) {
       ? "Apply: Walk-in"
       : job.contact_method === "in_app"
         ? "Apply: In app"
-        : `Contact: ${job.contact_method.toUpperCase()} • ${job.contact_phone ?? "Not provided"}`;
+        : `Contact: ${String(job.contact_method ?? "contact").toUpperCase()} • ${job.contact_phone ?? "Not provided"}`;
 
   const description = sanitize(job.description, 500);
   const details = description ? `\n\nDetails:\n${description}` : "";
+  const locationLine = job.posting_display_label
+    ? `Location: ${job.posting_display_label}\n`
+    : "";
   const url = `${ENV.WEB_BASE_URL}/job/${job.id}`;
 
   return (
     `Job Opportunity — AwoJobs\n\n` +
     `${sanitize(job.title, 120)}\n` +
+    `${locationLine}` +
     `Pay: ${formatPayType(job.pay_type)}\n` +
     `${contactLine}\n` +
     `Expires: ${expires}` +
@@ -90,8 +95,8 @@ function hasFullJobDetails(job: Partial<Job> | null): job is Job {
     !!job &&
     typeof job.id === "string" &&
     typeof job.title === "string" &&
-    typeof job.pay_type === "string" &&
-    typeof job.contact_method === "string" &&
+    "pay_type" in job &&
+    "contact_method" in job &&
     "expires_at" in job
   );
 }
@@ -472,6 +477,10 @@ export default function JobDetailScreen() {
               {timing.isExpired ? (
                 <StatusBadge label="Expired" tone="error" />
               ) : null}
+
+              {job.posting_display_label ? (
+                <StatusBadge label="Local job" tone="info" />
+              ) : null}
             </View>
 
             <View style={heroTextStyle}>
@@ -483,6 +492,14 @@ export default function JobDetailScreen() {
                   label="Pay Type"
                   value={formatPayType(job.pay_type)}
                 />
+
+                {job.posting_display_label ? (
+                  <MetaRow
+                    icon="location-outline"
+                    label="Location"
+                    value={job.posting_display_label}
+                  />
+                ) : null}
 
                 {timing.expiresLabel ? (
                   <MetaRow

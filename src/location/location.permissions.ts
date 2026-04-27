@@ -7,37 +7,73 @@ export type LocationPermissionResult = {
   canAskAgain: boolean;
 };
 
+async function safeHasServicesEnabled(): Promise<boolean> {
+  try {
+    return await Location.hasServicesEnabledAsync();
+  } catch {
+    return false;
+  }
+}
+
+function buildResult(
+  permissionStatus: Location.PermissionStatus,
+  servicesEnabled: boolean,
+  canAskAgain: boolean,
+): LocationPermissionResult {
+  return {
+    allowed: permissionStatus === Location.PermissionStatus.GRANTED,
+    permissionStatus,
+    servicesEnabled,
+    canAskAgain,
+  };
+}
+
 export async function ensureLocationPermission(): Promise<LocationPermissionResult> {
-  const servicesEnabled = await Location.hasServicesEnabledAsync();
+  const servicesEnabledBefore = await safeHasServicesEnabled();
 
-  const current = await Location.getForegroundPermissionsAsync();
+  let current: Location.PermissionResponse;
 
-  if (current.status === "granted") {
-    return {
-      allowed: servicesEnabled,
-      permissionStatus: current.status,
-      servicesEnabled,
-      canAskAgain: current.canAskAgain,
-    };
+  try {
+    current = await Location.getForegroundPermissionsAsync();
+  } catch {
+    return buildResult(
+      Location.PermissionStatus.UNDETERMINED,
+      servicesEnabledBefore,
+      true,
+    );
+  }
+
+  if (current.status === Location.PermissionStatus.GRANTED) {
+    return buildResult(
+      current.status,
+      await safeHasServicesEnabled(),
+      current.canAskAgain,
+    );
   }
 
   if (!current.canAskAgain) {
-    return {
-      allowed: false,
-      permissionStatus: current.status,
-      servicesEnabled,
-      canAskAgain: current.canAskAgain,
-    };
+    return buildResult(
+      current.status,
+      servicesEnabledBefore,
+      current.canAskAgain,
+    );
   }
 
-  const requested = await Location.requestForegroundPermissionsAsync();
-  const latestServicesEnabled = await Location.hasServicesEnabledAsync();
+  let requested: Location.PermissionResponse;
 
-  return {
-    allowed:
-      requested.status === "granted" && latestServicesEnabled,
-    permissionStatus: requested.status,
-    servicesEnabled: latestServicesEnabled,
-    canAskAgain: requested.canAskAgain,
-  };
+  try {
+    requested = await Location.requestForegroundPermissionsAsync();
+  } catch {
+    return buildResult(
+      current.status,
+      await safeHasServicesEnabled(),
+      current.canAskAgain,
+    );
+  }
+
+  return buildResult(
+    requested.status,
+    await safeHasServicesEnabled(),
+    requested.canAskAgain,
+  );
 }

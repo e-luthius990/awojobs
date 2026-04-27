@@ -6,14 +6,15 @@ import React, {
   useEffect,
 } from "react";
 import {
+  ActivityIndicator,
   Keyboard,
   KeyboardAvoidingView,
   Platform,
   Pressable,
   ScrollView,
-  View,
-  Image,
   TextInput,
+  View,
+  type TextStyle,
   type ViewStyle,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
@@ -28,8 +29,6 @@ import { requestRegistrationOtp } from "../../auth/auth.service";
 import { useTheme } from "../../theme/useTheme";
 import { AppScreen } from "../../ui/AppScreen";
 import { AppText } from "../../ui/AppText";
-import { AppInput } from "../../ui/AppInput";
-import { AppButton } from "../../ui/AppButton";
 import { InlineAlert } from "../../ui/InlineAlert";
 import { AppEntrance } from "../../ui/AppEntrance";
 import type {
@@ -45,6 +44,9 @@ type RegisterScreenNavigationProp = NativeStackNavigationProp<
   "Register"
 >;
 type RegisterScreenRouteProp = RouteProp<AuthStackParamList, "Register">;
+
+const SUBTITLE =
+  "Create your account and verify your phone number to continue.";
 
 function validateFullName(value: string): string | null {
   if (!value.trim()) return "Full name is required.";
@@ -219,145 +221,122 @@ export default function RegisterScreen() {
   const contentStyle = useMemo<ViewStyle>(
     () => ({
       flexGrow: 1,
-      justifyContent: "center",
-      paddingTop: theme.spacing.md,
-      paddingBottom: theme.spacing.lg,
       paddingHorizontal: theme.spacing.screenX,
+      paddingTop: 28,
+      paddingBottom: 32,
     }),
-    [theme.spacing.lg, theme.spacing.md, theme.spacing.screenX],
+    [theme.spacing.screenX],
   );
 
-  const topSectionStyle = useMemo<ViewStyle>(
+  const innerWrapStyle = useMemo<ViewStyle>(
     () => ({
-      marginBottom: theme.spacing.xl,
+      width: "100%",
+      maxWidth: 440,
+      alignSelf: "center",
     }),
-    [theme.spacing.xl],
+    [],
   );
 
-  const brandRowStyle = useMemo<ViewStyle>(
+  const headerStyle = useMemo<ViewStyle>(
     () => ({
+      alignItems: "center",
+      marginBottom: 24,
+      paddingTop: 12,
+    }),
+    [],
+  );
+
+  const backButtonStyle = useMemo<ViewStyle>(
+    () => ({
+      position: "absolute",
+      top: 0,
+      left: 0,
+      width: 40,
+      height: 40,
+      borderRadius: 20,
+      alignItems: "center",
+      justifyContent: "center",
+      zIndex: 2,
+    }),
+    [],
+  );
+
+  const subtitleStyle = useMemo<TextStyle>(
+    () => ({
+      textAlign: "center",
+      maxWidth: 320,
+      lineHeight: 23,
+      fontSize: 16,
+      marginTop: 44,
+    }),
+    [],
+  );
+
+  const formStyle = useMemo<ViewStyle>(
+    () => ({
+      width: "100%",
+    }),
+    [],
+  );
+
+  const fieldBlockStyle = useMemo<ViewStyle>(
+    () => ({
+      marginBottom: 12,
+    }),
+    [],
+  );
+
+  const inputShellStyle = useMemo<ViewStyle>(
+    () => ({
+      minHeight: 58,
+      borderRadius: 16,
+      borderWidth: 1,
+      borderColor: theme.colors.borderDefault,
+      backgroundColor: theme.colors.bgSurface,
       flexDirection: "row",
       alignItems: "center",
-      paddingTop: theme.spacing.xs,
-      paddingHorizontal: 2,
+      paddingHorizontal: 16,
     }),
-    [theme.spacing.xs],
+    [theme.colors.borderDefault, theme.colors.bgSurface],
   );
 
-  const navMarkStyle = useMemo<ViewStyle>(
+  const inputErrorShellStyle = useMemo<ViewStyle>(
     () => ({
-      width: 44,
-      height: 44,
-      borderRadius: 16,
-      backgroundColor: theme.colors.bgSurface,
-      borderWidth: 1,
-      borderColor: theme.colors.borderDefault,
-      alignItems: "center",
-      justifyContent: "center",
-      marginRight: theme.spacing.md,
-      ...theme.shadows.level1,
+      borderColor: theme.colors.error,
     }),
-    [
-      theme.colors.bgSurface,
-      theme.colors.borderDefault,
-      theme.shadows.level1,
-      theme.spacing.md,
-    ],
+    [theme.colors.error],
   );
 
-  const brandMarkStyle = useMemo<ViewStyle>(
-    () => ({
-      width: 52,
-      height: 52,
-      borderRadius: 16,
-      backgroundColor: theme.colors.bgSurface,
-      borderWidth: 1,
-      borderColor: theme.colors.borderDefault,
-      alignItems: "center",
-      justifyContent: "center",
-      marginRight: theme.spacing.md,
-      ...theme.shadows.level1,
-    }),
-    [
-      theme.colors.bgSurface,
-      theme.colors.borderDefault,
-      theme.shadows.level1,
-      theme.spacing.md,
-    ],
-  );
-
-  const brandLogoStyle = useMemo<ViewStyle>(
-    () => ({
-      width: 72,
-      height: 72,
-    }),
-    [],
-  );
-
-  const brandTextWrapStyle = useMemo<ViewStyle>(
+  const inputStyle = useMemo<TextStyle>(
     () => ({
       flex: 1,
+      color: theme.colors.textPrimary,
+      fontSize: 16,
+      paddingVertical: Platform.OS === "ios" ? 16 : 12,
+    }),
+    [theme.colors.textPrimary],
+  );
+
+  const hintTextStyle = useMemo<TextStyle>(
+    () => ({
+      marginTop: -2,
+      marginBottom: 12,
     }),
     [],
-  );
-
-  const brandSubtitleStyle = useMemo<ViewStyle>(
-    () => ({
-      marginTop: theme.spacing.xxs,
-    }),
-    [theme.spacing.xxs],
-  );
-
-  const formShellStyle = useMemo<ViewStyle>(
-    () => ({
-      borderRadius: 28,
-      backgroundColor: theme.colors.bgSurfaceElevated,
-      borderWidth: 1,
-      borderColor: theme.colors.borderDefault,
-      padding: theme.spacing.lg,
-      ...theme.shadows.level2,
-    }),
-    [
-      theme.colors.bgSurfaceElevated,
-      theme.colors.borderDefault,
-      theme.shadows.level2,
-      theme.spacing.lg,
-    ],
-  );
-
-  const formTopStyle = useMemo<ViewStyle>(
-    () => ({
-      marginBottom: theme.spacing.lg,
-    }),
-    [theme.spacing.lg],
-  );
-
-  const formTopHintStyle = useMemo<ViewStyle>(
-    () => ({
-      marginTop: 6,
-    }),
-    [],
-  );
-
-  const fieldGroupStyle = useMemo<ViewStyle>(
-    () => ({
-      marginBottom: theme.spacing.sm,
-    }),
-    [theme.spacing.sm],
   );
 
   const roleSectionStyle = useMemo<ViewStyle>(
     () => ({
-      marginBottom: theme.spacing.sm,
+      marginBottom: 12,
     }),
-    [theme.spacing.sm],
+    [],
   );
 
   const roleSectionTitleStyle = useMemo<ViewStyle>(
     () => ({
-      marginBottom: theme.spacing.sm,
+      marginBottom: 10,
     }),
-    [theme.spacing.sm],
+    [],
   );
 
   const roleGridStyle = useMemo<ViewStyle>(
@@ -369,34 +348,46 @@ export default function RegisterScreen() {
 
   const submitErrorWrapStyle = useMemo<ViewStyle>(
     () => ({
-      marginTop: theme.spacing.sm,
-    }),
-    [theme.spacing.sm],
-  );
-
-  const buttonWrapStyle = useMemo<ViewStyle>(
-    () => ({
-      marginTop: theme.spacing.md,
-    }),
-    [theme.spacing.md],
-  );
-
-  const footerStyle = useMemo<ViewStyle>(
-    () => ({
-      alignItems: "center",
-      paddingTop: theme.spacing.md,
-    }),
-    [theme.spacing.md],
-  );
-
-  const inlineRowStyle = useMemo<ViewStyle>(
-    () => ({
-      flexDirection: "row",
-      alignItems: "center",
-      justifyContent: "center",
-      flexWrap: "wrap",
+      marginBottom: 14,
     }),
     [],
+  );
+
+  const buttonStyle = useMemo<ViewStyle>(
+    () => ({
+      height: 56,
+      borderRadius: 16,
+      alignItems: "center",
+      justifyContent: "center",
+      marginTop: 8,
+      backgroundColor: canSubmit
+        ? theme.colors.primary
+        : theme.colors.borderDefault,
+    }),
+    [canSubmit, theme.colors.primary, theme.colors.borderDefault],
+  );
+
+  const buttonTextStyle = useMemo<TextStyle>(
+    () => ({
+      color: canSubmit ? theme.colors.textInverse : theme.colors.textSecondary,
+      fontSize: 16,
+      fontWeight: "700",
+      letterSpacing: 0.2,
+    }),
+    [canSubmit, theme.colors.textInverse, theme.colors.textSecondary],
+  );
+
+  const roleOptionBaseStyle = useMemo<ViewStyle>(
+    () => ({
+      flex: 1,
+      minHeight: 54,
+      borderRadius: theme.radius.xl,
+      borderWidth: 1,
+      paddingHorizontal: theme.spacing.md,
+      paddingVertical: theme.spacing.sm,
+      justifyContent: "center",
+    }),
+    [theme.radius.xl, theme.spacing.md, theme.spacing.sm],
   );
 
   const handleFullNameChange = useCallback((value: string) => {
@@ -524,14 +515,8 @@ export default function RegisterScreen() {
         accessibilityState={{ selected, disabled: roleLocked }}
         disabled={roleLocked}
         style={({ pressed }) => [
+          roleOptionBaseStyle,
           {
-            flex: 1,
-            minHeight: 54,
-            borderRadius: theme.radius.xl,
-            borderWidth: 1,
-            paddingHorizontal: theme.spacing.md,
-            paddingVertical: theme.spacing.sm,
-            justifyContent: "center",
             marginRight: isLeft ? theme.spacing.sm : 0,
             backgroundColor: selected
               ? theme.colors.bgSurfaceMuted
@@ -571,6 +556,75 @@ export default function RegisterScreen() {
     );
   }
 
+  const renderTextInputField = ({
+    ref,
+    value,
+    onChangeText,
+    onBlur,
+    placeholder,
+    placeholderTextColor,
+    secureTextEntry,
+    keyboardType,
+    autoCorrect,
+    autoCapitalize,
+    textContentType,
+    returnKeyType,
+    onSubmitEditing,
+    rightSlot,
+    error,
+  }: {
+    ref?: React.RefObject<TextInput | null>;
+    value: string;
+    onChangeText: (value: string) => void;
+    onBlur: () => void;
+    placeholder: string;
+    placeholderTextColor: string;
+    secureTextEntry?: boolean;
+    keyboardType?: "default" | "phone-pad";
+    autoCorrect?: boolean;
+    autoCapitalize?: "none" | "words";
+    textContentType?:
+      | "name"
+      | "telephoneNumber"
+      | "newPassword"
+      | "password"
+      | "none";
+    returnKeyType?: "next" | "done";
+    onSubmitEditing?: () => void;
+    rightSlot?: React.ReactNode;
+    error?: string | null;
+  }) => (
+    <View style={fieldBlockStyle}>
+      <View style={[inputShellStyle, error ? inputErrorShellStyle : null]}>
+        <TextInput
+          ref={ref}
+          value={value}
+          onChangeText={onChangeText}
+          onBlur={onBlur}
+          placeholder={placeholder}
+          placeholderTextColor={placeholderTextColor}
+          secureTextEntry={secureTextEntry}
+          keyboardType={keyboardType}
+          autoCorrect={autoCorrect}
+          autoCapitalize={autoCapitalize}
+          textContentType={textContentType}
+          returnKeyType={returnKeyType}
+          onSubmitEditing={onSubmitEditing}
+          style={inputStyle}
+        />
+        {rightSlot}
+      </View>
+
+      {error ? (
+        <View style={{ marginTop: 8 }}>
+          <AppText variant="caption" tone="error">
+            {error}
+          </AppText>
+        </View>
+      ) : null}
+    </View>
+  );
+
   return (
     <AppScreen scroll={false} keyboardAvoiding={false} padded={false}>
       <KeyboardAvoidingView
@@ -587,191 +641,129 @@ export default function RegisterScreen() {
           showsVerticalScrollIndicator={false}
           bounces={false}
         >
-          <AppEntrance>
-            <View style={topSectionStyle}>
-              <View style={brandRowStyle}>
+          <View style={innerWrapStyle}>
+            <AppEntrance>
+              <View style={headerStyle}>
                 <Pressable
                   onPress={() => navigation.goBack()}
                   accessibilityRole="button"
                   accessibilityLabel="Go back"
                   style={({ pressed }) => [
-                    navMarkStyle,
-                    pressed ? { opacity: 0.8 } : null,
+                    backButtonStyle,
+                    pressed ? { opacity: 0.72 } : null,
                   ]}
                 >
                   <Ionicons
                     name="chevron-back"
-                    size={22}
+                    size={24}
                     color={theme.colors.textPrimary}
                   />
                 </Pressable>
 
-                <View style={brandMarkStyle}>
-                  <Image
-                    source={require("../../../assets/logo.png")}
-                    style={brandLogoStyle}
-                    resizeMode="contain"
-                  />
-                </View>
-
-                <View style={brandTextWrapStyle}>
-                  <AppText variant="labelLg" weight="700">
-                    AwoJobs
-                  </AppText>
-                  <AppText
-                    variant="caption"
-                    tone="secondary"
-                    style={brandSubtitleStyle}
-                  >
-                    Create your account
-                  </AppText>
-                </View>
-              </View>
-            </View>
-          </AppEntrance>
-
-          <AppEntrance delay={40}>
-            <View style={formShellStyle}>
-              <View style={formTopStyle}>
-                <AppText variant="titleLg">Registration details</AppText>
-                <AppText
-                  variant="bodySm"
-                  tone="secondary"
-                  style={formTopHintStyle}
-                >
-                  We will verify your phone number before your account is
-                  activated.
+                <AppText variant="body" tone="secondary" style={subtitleStyle}>
+                  {SUBTITLE}
                 </AppText>
               </View>
+            </AppEntrance>
 
-              <View style={fieldGroupStyle}>
-                <AppInput
-                  ref={fullNameRef}
-                  label="Full name"
-                  value={fullName}
-                  onChangeText={handleFullNameChange}
-                  onBlur={() => setFullNameTouched(true)}
-                  placeholder="Enter your full name"
-                  autoCapitalize="words"
-                  autoCorrect={false}
-                  returnKeyType="next"
-                  onSubmitEditing={() => {
+            <AppEntrance delay={40}>
+              <View style={formStyle}>
+                {renderTextInputField({
+                  ref: fullNameRef,
+                  value: fullName,
+                  onChangeText: handleFullNameChange,
+                  onBlur: () => setFullNameTouched(true),
+                  placeholder: "Full name",
+                  placeholderTextColor: theme.colors.textTertiary,
+                  autoCapitalize: "words",
+                  autoCorrect: false,
+                  textContentType: "name",
+                  returnKeyType: "next",
+                  onSubmitEditing: () => {
                     if (resolvedRole === "employer") {
                       businessNameRef.current?.focus();
                       return;
                     }
                     phoneRef.current?.focus();
-                  }}
-                  leftSlot={
-                    <Ionicons
-                      name="person-outline"
-                      size={18}
-                      color={theme.colors.textSecondary}
-                    />
-                  }
-                  error={fullNameError ?? undefined}
-                />
-              </View>
+                  },
+                  error: fullNameError,
+                })}
 
-              {resolvedRole === "employer" ? (
-                <View style={fieldGroupStyle}>
-                  <AppInput
-                    ref={businessNameRef}
-                    label="Business name"
-                    value={businessName}
-                    onChangeText={handleBusinessNameChange}
-                    onBlur={() => setBusinessNameTouched(true)}
-                    placeholder="Optional business name"
-                    autoCapitalize="words"
-                    autoCorrect={false}
-                    returnKeyType="next"
-                    onSubmitEditing={() => phoneRef.current?.focus()}
-                    leftSlot={
-                      <Ionicons
-                        name="briefcase-outline"
-                        size={18}
-                        color={theme.colors.textSecondary}
+                {resolvedRole === "employer"
+                  ? renderTextInputField({
+                      ref: businessNameRef,
+                      value: businessName,
+                      onChangeText: handleBusinessNameChange,
+                      onBlur: () => setBusinessNameTouched(true),
+                      placeholder: "Business name (optional)",
+                      placeholderTextColor: theme.colors.textTertiary,
+                      autoCapitalize: "words",
+                      autoCorrect: false,
+                      textContentType: "none",
+                      returnKeyType: "next",
+                      onSubmitEditing: () => phoneRef.current?.focus(),
+                      error: businessNameError,
+                    })
+                  : null}
+
+                {renderTextInputField({
+                  ref: phoneRef,
+                  value: phone,
+                  onChangeText: handlePhoneChange,
+                  onBlur: () => setPhoneTouched(true),
+                  placeholder: "+256 7XX XXX XXX",
+                  placeholderTextColor: theme.colors.textTertiary,
+                  keyboardType: "phone-pad",
+                  autoCapitalize: "none",
+                  autoCorrect: false,
+                  textContentType: "telephoneNumber",
+                  returnKeyType: "next",
+                  onSubmitEditing: () => passwordRef.current?.focus(),
+                  error: phoneError,
+                })}
+
+                {roleLocked ? (
+                  <View style={roleSectionStyle}>
+                    <InlineAlert tone="info" message={lockedRoleMessage} />
+                  </View>
+                ) : (
+                  <View style={roleSectionStyle}>
+                    <View style={roleSectionTitleStyle}>
+                      <AppText variant="labelLg" weight="700">
+                        Account type
+                      </AppText>
+                    </View>
+
+                    <View style={roleGridStyle}>
+                      <RoleOption
+                        value="job_seeker"
+                        label="Job Seeker"
+                        icon="person-outline"
+                        isLeft
                       />
-                    }
-                    hint="Optional"
-                    error={businessNameError ?? undefined}
-                  />
-                </View>
-              ) : null}
-
-              <View style={fieldGroupStyle}>
-                <AppInput
-                  ref={phoneRef}
-                  label="Phone number"
-                  value={phone}
-                  onChangeText={handlePhoneChange}
-                  onBlur={() => setPhoneTouched(true)}
-                  placeholder="+256 7XX XXX XXX"
-                  keyboardType="phone-pad"
-                  autoCorrect={false}
-                  autoCapitalize="none"
-                  textContentType="telephoneNumber"
-                  returnKeyType="next"
-                  onSubmitEditing={() => passwordRef.current?.focus()}
-                  leftSlot={
-                    <Ionicons
-                      name="call-outline"
-                      size={18}
-                      color={theme.colors.textSecondary}
-                    />
-                  }
-                  error={phoneError ?? undefined}
-                />
-              </View>
-
-              {roleLocked ? (
-                <View style={roleSectionStyle}>
-                  <InlineAlert tone="info" message={lockedRoleMessage} />
-                </View>
-              ) : (
-                <View style={roleSectionStyle}>
-                  <View style={roleSectionTitleStyle}>
-                    <AppText variant="labelLg">Account type</AppText>
+                      <RoleOption
+                        value="employer"
+                        label="Employer"
+                        icon="briefcase-outline"
+                      />
+                    </View>
                   </View>
+                )}
 
-                  <View style={roleGridStyle}>
-                    <RoleOption
-                      value="job_seeker"
-                      label="Job Seeker"
-                      icon="person-outline"
-                      isLeft
-                    />
-                    <RoleOption
-                      value="employer"
-                      label="Employer"
-                      icon="briefcase-outline"
-                    />
-                  </View>
-                </View>
-              )}
-
-              <View style={fieldGroupStyle}>
-                <AppInput
-                  ref={passwordRef}
-                  label="Password"
-                  value={password}
-                  onChangeText={handlePasswordChange}
-                  onBlur={() => setPasswordTouched(true)}
-                  placeholder="Create a password"
-                  secureTextEntry={!showPassword}
-                  autoCorrect={false}
-                  autoCapitalize="none"
-                  textContentType="newPassword"
-                  returnKeyType="next"
-                  onSubmitEditing={() => confirmPasswordRef.current?.focus()}
-                  leftSlot={
-                    <Ionicons
-                      name="lock-closed-outline"
-                      size={18}
-                      color={theme.colors.textSecondary}
-                    />
-                  }
-                  rightSlot={
+                {renderTextInputField({
+                  ref: passwordRef,
+                  value: password,
+                  onChangeText: handlePasswordChange,
+                  onBlur: () => setPasswordTouched(true),
+                  placeholder: "Create password",
+                  placeholderTextColor: theme.colors.textTertiary,
+                  secureTextEntry: !showPassword,
+                  autoCapitalize: "none",
+                  autoCorrect: false,
+                  textContentType: "newPassword",
+                  returnKeyType: "next",
+                  onSubmitEditing: () => confirmPasswordRef.current?.focus(),
+                  rightSlot: (
                     <Pressable
                       accessibilityRole="button"
                       accessibilityLabel={
@@ -786,34 +778,32 @@ export default function RegisterScreen() {
                         color={theme.colors.textSecondary}
                       />
                     </Pressable>
-                  }
-                  hint="Use at least 8 characters with letters and numbers."
-                  error={passwordError ?? undefined}
-                />
-              </View>
+                  ),
+                  error: passwordError,
+                })}
 
-              <View style={fieldGroupStyle}>
-                <AppInput
-                  ref={confirmPasswordRef}
-                  label="Confirm password"
-                  value={confirmPassword}
-                  onChangeText={handleConfirmPasswordChange}
-                  onBlur={() => setConfirmPasswordTouched(true)}
-                  placeholder="Re-enter your password"
-                  secureTextEntry={!showConfirmPassword}
-                  autoCorrect={false}
-                  autoCapitalize="none"
-                  textContentType="password"
-                  returnKeyType="done"
-                  onSubmitEditing={handleRegister}
-                  leftSlot={
-                    <Ionicons
-                      name="lock-closed-outline"
-                      size={18}
-                      color={theme.colors.textSecondary}
-                    />
-                  }
-                  rightSlot={
+                <AppText
+                  variant="caption"
+                  tone="secondary"
+                  style={hintTextStyle}
+                >
+                  Use at least 8 characters with letters and numbers.
+                </AppText>
+
+                {renderTextInputField({
+                  ref: confirmPasswordRef,
+                  value: confirmPassword,
+                  onChangeText: handleConfirmPasswordChange,
+                  onBlur: () => setConfirmPasswordTouched(true),
+                  placeholder: "Confirm password",
+                  placeholderTextColor: theme.colors.textTertiary,
+                  secureTextEntry: !showConfirmPassword,
+                  autoCapitalize: "none",
+                  autoCorrect: false,
+                  textContentType: "password",
+                  returnKeyType: "done",
+                  onSubmitEditing: handleRegister,
+                  rightSlot: (
                     <Pressable
                       accessibilityRole="button"
                       accessibilityLabel={
@@ -834,49 +824,32 @@ export default function RegisterScreen() {
                         color={theme.colors.textSecondary}
                       />
                     </Pressable>
-                  }
-                  error={confirmPasswordError ?? undefined}
-                />
-              </View>
+                  ),
+                  error: confirmPasswordError,
+                })}
 
-              {submitError ? (
-                <View style={submitErrorWrapStyle}>
-                  <InlineAlert tone="error" message={submitError} />
-                </View>
-              ) : null}
+                {submitError ? (
+                  <View style={submitErrorWrapStyle}>
+                    <InlineAlert tone="error" message={submitError} />
+                  </View>
+                ) : null}
 
-              <View style={buttonWrapStyle}>
-                <AppButton
-                  title="Continue"
+                <Pressable
                   onPress={handleRegister}
-                  loading={loading}
                   disabled={!canSubmit}
-                  variant="primary"
-                />
+                  style={({ pressed }) => [
+                    buttonStyle,
+                    pressed && canSubmit ? { opacity: 0.9 } : null,
+                  ]}
+                >
+                  {loading ? (
+                    <ActivityIndicator color={theme.colors.textInverse} />
+                  ) : (
+                    <AppText style={buttonTextStyle}>Continue</AppText>
+                  )}
+                </Pressable>
               </View>
-            </View>
-          </AppEntrance>
-
-          <View style={footerStyle}>
-            <Pressable
-              onPress={() =>
-                navigation.navigate("Login", {
-                  forcedRole: route.params?.forcedRole,
-                  role: route.params?.role,
-                  intent,
-                })
-              }
-              style={({ pressed }) => [pressed ? { opacity: 0.72 } : null]}
-            >
-              <View style={inlineRowStyle}>
-                <AppText variant="bodySm" tone="secondary">
-                  Already have an account?{" "}
-                </AppText>
-                <AppText variant="bodySm" tone="link" weight="700">
-                  Sign In
-                </AppText>
-              </View>
-            </Pressable>
+            </AppEntrance>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>

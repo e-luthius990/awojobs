@@ -15,7 +15,8 @@ export type AppButtonVariant =
   | "primary"
   | "secondary"
   | "ghost"
-  | "destructive";
+  | "destructive"
+  | "whatsapp";
 
 export type AppButtonSize = "sm" | "md" | "lg";
 
@@ -38,7 +39,7 @@ export type AppButtonProps = {
 function getHeight(size: AppButtonSize, defaultHeight: number) {
   switch (size) {
     case "sm":
-      return 44;
+      return 42;
     case "lg":
       return 56;
     case "md":
@@ -85,6 +86,7 @@ export function AppButton({
   const isDisabled = disabled || loading;
   const height = getHeight(size, theme.layout.buttonHeight);
   const horizontalPadding = getHorizontalPadding(size);
+  const isSmall = size === "sm";
 
   const resolved = useMemo(() => {
     const sharedBase: ViewStyle = {
@@ -103,10 +105,12 @@ export function AppButton({
             backgroundColor: theme.colors.bgSurface,
             borderWidth: 1,
             borderColor: theme.colors.borderDefault,
+            shadowOpacity: 0,
+            elevation: 0,
           } satisfies ViewStyle,
           pressedStyle: {
             backgroundColor: theme.colors.surfacePressed,
-            borderColor: theme.colors.borderStrong,
+            borderColor: theme.colors.borderDefault,
           } satisfies ViewStyle,
           disabledStyle: {
             backgroundColor: theme.colors.buttonDisabledBg,
@@ -125,6 +129,8 @@ export function AppButton({
             ...sharedBase,
             paddingHorizontal: Math.max(0, horizontalPadding - 2),
             backgroundColor: "transparent",
+            shadowOpacity: 0,
+            elevation: 0,
           } satisfies ViewStyle,
           pressedStyle: {
             backgroundColor: theme.colors.buttonGhostBgPressed,
@@ -144,9 +150,34 @@ export function AppButton({
           containerStyle: {
             ...sharedBase,
             backgroundColor: theme.colors.error,
+            shadowOpacity: 0,
+            elevation: 0,
           } satisfies ViewStyle,
           pressedStyle: {
-            opacity: 0.94,
+            opacity: 0.96,
+          } satisfies ViewStyle,
+          disabledStyle: {
+            backgroundColor: theme.colors.buttonDisabledBg,
+            borderWidth: 0,
+            shadowOpacity: 0,
+            elevation: 0,
+          } satisfies ViewStyle,
+          textTone: "inverse" as const,
+          spinnerColor: theme.colors.textInverse,
+        };
+
+      case "whatsapp":
+        return {
+          containerStyle: {
+            ...sharedBase,
+            backgroundColor: "#25D366",
+            borderWidth: 0,
+            shadowOpacity: 0,
+            elevation: 0,
+          } satisfies ViewStyle,
+          pressedStyle: {
+            backgroundColor: "#1EBE5D",
+            opacity: 0.96,
           } satisfies ViewStyle,
           disabledStyle: {
             backgroundColor: theme.colors.buttonDisabledBg,
@@ -166,6 +197,12 @@ export function AppButton({
             minHeight: height,
             borderRadius: theme.radius.lg,
             paddingHorizontal: horizontalPadding,
+            ...(isSmall
+              ? {
+                  shadowOpacity: 0,
+                  elevation: 0,
+                }
+              : null),
           } satisfies ViewStyle,
           pressedStyle: {
             backgroundColor: theme.colors.primaryPressed,
@@ -183,11 +220,11 @@ export function AppButton({
   }, [
     height,
     horizontalPadding,
+    isSmall,
     theme.button.primary,
     theme.colors.bgSurface,
     theme.colors.borderDefault,
     theme.colors.borderMuted,
-    theme.colors.borderStrong,
     theme.colors.buttonDisabledBg,
     theme.colors.buttonGhostBgPressed,
     theme.colors.error,
@@ -203,6 +240,7 @@ export function AppButton({
   const frameStyle = useMemo<ViewStyle>(
     () => ({
       width: fullWidth ? "100%" : undefined,
+      alignSelf: fullWidth ? "stretch" : "flex-start",
     }),
     [fullWidth],
   );
@@ -266,12 +304,7 @@ export function AppButton({
         resolved.containerStyle,
         frameStyle,
         isDisabled ? resolved.disabledStyle : null,
-        !isDisabled && pressed
-          ? {
-              opacity: 0.985,
-              transform: [{ scale: 0.992 }],
-            }
-          : null,
+        !isDisabled && pressed ? { opacity: 0.96 } : null,
         !isDisabled && pressed ? resolved.pressedStyle : null,
         style,
       ]}

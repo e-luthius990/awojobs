@@ -80,17 +80,18 @@ export const createThemeTokens = (mode: ThemeMode): ThemeTokens => {
         ...borderedCardBase,
         backgroundColor: colors.bgSurface,
         borderColor: colors.borderDefault,
+        ...shadows.level1,
       },
       elevated: {
         ...borderedCardBase,
         backgroundColor: colors.bgSurfaceElevated,
         borderColor: colors.borderMuted,
-        ...shadows.level1,
+        ...shadows.level2,
       },
       muted: {
         ...borderedCardBase,
         backgroundColor: colors.bgSurfaceMuted,
-        borderColor: colors.borderMuted,
+        borderColor: colors.borderDefault,
       },
       premium: {
         backgroundColor: colors.premiumSoft,
@@ -105,6 +106,7 @@ export const createThemeTokens = (mode: ThemeMode): ThemeTokens => {
         backgroundColor: colors.sponsoredSoft,
         borderWidth: 1,
         borderColor: colors.sponsoredBorder,
+        ...shadows.level1,
       },
       sunken: {
         ...borderedCardBase,

@@ -6,14 +6,16 @@ import React, {
   useState,
 } from "react";
 import {
+  ActivityIndicator,
+  Image,
   Keyboard,
   KeyboardAvoidingView,
   Platform,
   Pressable,
   ScrollView,
-  View,
-  Image,
   TextInput,
+  View,
+  type TextStyle,
   type ViewStyle,
 } from "react-native";
 import {
@@ -21,20 +23,17 @@ import {
   useRoute,
   type RouteProp,
 } from "@react-navigation/native";
-import { Ionicons } from "@expo/vector-icons";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
+import { Ionicons } from "@expo/vector-icons";
 
 import { login } from "../../auth/auth.service";
 import { useTheme } from "../../theme/useTheme";
 import { AppScreen } from "../../ui/AppScreen";
 import { AppText } from "../../ui/AppText";
-import { AppButton } from "../../ui/AppButton";
-import { AppInput } from "../../ui/AppInput";
 import { InlineAlert } from "../../ui/InlineAlert";
 import { AppEntrance } from "../../ui/AppEntrance";
 import type { AuthStackParamList } from "../../navigation/AuthNavigator";
 
-const FORM_TITLE = "Login";
 const LOGIN_HINT = "Use the phone number and password linked to your account.";
 
 type LoginNavigationProp = NativeStackNavigationProp<
@@ -78,7 +77,6 @@ export default function LoginScreen() {
 
   const [phoneTouched, setPhoneTouched] = useState(false);
   const [passwordTouched, setPasswordTouched] = useState(false);
-
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -112,152 +110,162 @@ export default function LoginScreen() {
   const contentStyle = useMemo<ViewStyle>(
     () => ({
       flexGrow: 1,
-      justifyContent: "center",
-      paddingTop: theme.spacing.lg,
-      paddingBottom: theme.spacing.lg,
       paddingHorizontal: theme.spacing.screenX,
+      paddingTop: 56,
+      paddingBottom: 40,
     }),
-    [theme.spacing.lg, theme.spacing.screenX],
+    [theme.spacing.screenX],
   );
 
-  const topSectionStyle = useMemo<ViewStyle>(
-    () => ({
-      marginBottom: theme.spacing.xl,
-    }),
-    [theme.spacing.xl],
-  );
-
-  const brandRowStyle = useMemo<ViewStyle>(
-    () => ({
-      flexDirection: "row",
-      alignItems: "center",
-      paddingTop: theme.spacing.xs,
-      paddingHorizontal: 2,
-    }),
-    [theme.spacing.xs],
-  );
-
-  const brandMarkStyle = useMemo<ViewStyle>(
-    () => ({
-      width: 52,
-      height: 52,
-      borderRadius: 16,
-      backgroundColor: theme.colors.bgSurface,
-      borderWidth: 1,
-      borderColor: theme.colors.borderDefault,
-      alignItems: "center",
-      justifyContent: "center",
-      marginRight: theme.spacing.md,
-      ...theme.shadows.level1,
-    }),
-    [
-      theme.colors.bgSurface,
-      theme.colors.borderDefault,
-      theme.shadows.level1,
-      theme.spacing.md,
-    ],
-  );
-
-  const brandLogoStyle = useMemo<ViewStyle>(
-    () => ({
-      width: 72,
-      height: 72,
-    }),
-    [],
-  );
-
-  const brandTextWrapStyle = useMemo<ViewStyle>(
+  const innerWrapStyle = useMemo<ViewStyle>(
     () => ({
       flex: 1,
+      width: "100%",
+      maxWidth: 440,
+      alignSelf: "center",
     }),
     [],
   );
 
-  const brandSubtitleStyle = useMemo<ViewStyle>(
+  const layoutStyle = useMemo<ViewStyle>(
     () => ({
-      marginTop: theme.spacing.xxs,
+      flex: 1,
+      justifyContent: "space-between",
     }),
-    [theme.spacing.xxs],
+    [],
   );
 
-  const formShellStyle = useMemo<ViewStyle>(
+  const topContentStyle = useMemo<ViewStyle>(
     () => ({
-      borderRadius: 28,
-      backgroundColor: theme.colors.bgSurfaceElevated,
+      width: "100%",
+    }),
+    [],
+  );
+
+  const headerStyle = useMemo<ViewStyle>(
+    () => ({
+      alignItems: "center",
+      marginBottom: 24,
+    }),
+    [],
+  );
+
+  const logoWrapStyle = useMemo<ViewStyle>(
+    () => ({
+      alignItems: "center",
+      justifyContent: "center",
+      marginBottom: 12,
+      width: "100%",
+    }),
+    [],
+  );
+
+  const logoStyle = useMemo<ViewStyle>(
+    () => ({
+      width: 180,
+      height: 180,
+    }),
+    [],
+  );
+
+  const subtitleStyle = useMemo<TextStyle>(
+    () => ({
+      textAlign: "center",
+      maxWidth: 340,
+      lineHeight: 24,
+      fontSize: 16,
+    }),
+    [],
+  );
+
+  const formStyle = useMemo<ViewStyle>(
+    () => ({
+      width: "100%",
+    }),
+    [],
+  );
+
+  const fieldBlockStyle = useMemo<ViewStyle>(
+    () => ({
+      marginBottom: 14,
+    }),
+    [],
+  );
+
+  const inputShellStyle = useMemo<ViewStyle>(
+    () => ({
+      minHeight: 58,
+      borderRadius: 16,
       borderWidth: 1,
       borderColor: theme.colors.borderDefault,
-      padding: theme.spacing.lg,
-      ...theme.shadows.level2,
+      backgroundColor: theme.colors.bgSurface,
+      flexDirection: "row",
+      alignItems: "center",
+      paddingHorizontal: 16,
     }),
-    [
-      theme.colors.bgSurfaceElevated,
-      theme.colors.borderDefault,
-      theme.shadows.level2,
-      theme.spacing.lg,
-    ],
+    [theme.colors.bgSurface, theme.colors.borderDefault],
   );
 
-  const formTopStyle = useMemo<ViewStyle>(
+  const inputErrorShellStyle = useMemo<ViewStyle>(
     () => ({
-      marginBottom: theme.spacing.lg,
+      borderColor: theme.colors.error,
     }),
-    [theme.spacing.lg],
+    [theme.colors.error],
   );
 
-  const formTopHintStyle = useMemo<ViewStyle>(
+  const inputStyle = useMemo<TextStyle>(
     () => ({
-      marginTop: 6,
+      flex: 1,
+      color: theme.colors.textPrimary,
+      fontSize: 16,
+      paddingVertical: Platform.OS === "ios" ? 16 : 12,
     }),
-    [],
-  );
-
-  const fieldGroupStyle = useMemo<ViewStyle>(
-    () => ({
-      marginBottom: theme.spacing.md,
-    }),
-    [theme.spacing.md],
+    [theme.colors.textPrimary],
   );
 
   const forgotWrapStyle = useMemo<ViewStyle>(
     () => ({
       alignItems: "flex-end",
-      marginTop: -2,
-      marginBottom: theme.spacing.md,
-    }),
-    [theme.spacing.md],
-  );
-
-  const forgotPressableStyle = useMemo<ViewStyle>(
-    () => ({
-      minHeight: 36,
-      justifyContent: "center",
+      marginTop: 2,
+      marginBottom: 20,
     }),
     [],
   );
 
-  const buttonWrapStyle = useMemo<ViewStyle>(
+  const buttonStyle = useMemo<ViewStyle>(
     () => ({
-      marginTop: theme.spacing.xs,
+      height: 56,
+      borderRadius: 16,
+      alignItems: "center",
+      justifyContent: "center",
+      marginTop: 8,
+      backgroundColor: canSubmit
+        ? theme.colors.primary
+        : theme.colors.borderDefault,
     }),
-    [theme.spacing.xs],
+    [canSubmit, theme.colors.primary, theme.colors.borderDefault],
+  );
+
+  const buttonTextStyle = useMemo<TextStyle>(
+    () => ({
+      color: canSubmit ? theme.colors.textInverse : theme.colors.textSecondary,
+      fontSize: 16,
+      fontWeight: "700",
+      letterSpacing: 0.2,
+    }),
+    [canSubmit, theme.colors.textInverse, theme.colors.textSecondary],
   );
 
   const footerStyle = useMemo<ViewStyle>(
     () => ({
       alignItems: "center",
-      paddingTop: theme.spacing.lg,
+      marginTop: 20,
+      paddingBottom: 8,
     }),
-    [theme.spacing.lg],
+    [],
   );
 
-  const footerPrimaryLinkStyle = useMemo<ViewStyle>(
-    () => ({
-      marginBottom: theme.spacing.sm,
-    }),
-    [theme.spacing.sm],
-  );
-
-  const signupRowStyle = useMemo<ViewStyle>(
+  const footerRowStyle = useMemo<ViewStyle>(
     () => ({
       flexDirection: "row",
       alignItems: "center",
@@ -346,160 +354,164 @@ export default function LoginScreen() {
           bounces={false}
           contentContainerStyle={contentStyle}
         >
-          <AppEntrance>
-            <View style={topSectionStyle}>
-              <View style={brandRowStyle}>
-                <View style={brandMarkStyle}>
-                  <Image
-                    source={require("../../../assets/logo.png")}
-                    style={brandLogoStyle}
-                    resizeMode="contain"
-                  />
-                </View>
-
-                <View style={brandTextWrapStyle}>
-                  <AppText variant="labelLg" weight="700">
-                    AwoJobs
-                  </AppText>
-                  <AppText
-                    variant="caption"
-                    tone="secondary"
-                    style={brandSubtitleStyle}
-                  >
-                    Sign in to continue
-                  </AppText>
-                </View>
-              </View>
-            </View>
-          </AppEntrance>
-
-          <AppEntrance delay={40}>
-            <View style={formShellStyle}>
-              <View style={formTopStyle}>
-                <AppText variant="titleLg">{FORM_TITLE}</AppText>
-                <AppText
-                  variant="bodySm"
-                  tone="secondary"
-                  style={formTopHintStyle}
-                >
-                  {LOGIN_HINT}
-                </AppText>
-              </View>
-
-              <View style={fieldGroupStyle}>
-                <AppInput
-                  label="Phone number"
-                  placeholder="+256 7XX XXX XXX"
-                  keyboardType="phone-pad"
-                  autoCorrect={false}
-                  autoCapitalize="none"
-                  textContentType="telephoneNumber"
-                  value={phone}
-                  error={phoneError ?? undefined}
-                  onChangeText={handlePhoneChange}
-                  onBlur={() => setPhoneTouched(true)}
-                  returnKeyType="next"
-                  onSubmitEditing={() => passwordRef.current?.focus()}
-                  leftSlot={
-                    <Ionicons
-                      name="call-outline"
-                      size={18}
-                      color={theme.colors.textSecondary}
-                    />
-                  }
-                />
-              </View>
-
-              <View style={fieldGroupStyle}>
-                <AppInput
-                  ref={passwordRef}
-                  label="Password"
-                  placeholder="Enter your password"
-                  secureTextEntry={secure}
-                  value={password}
-                  error={passwordError ?? undefined}
-                  onChangeText={handlePasswordChange}
-                  onBlur={() => setPasswordTouched(true)}
-                  returnKeyType="done"
-                  autoCorrect={false}
-                  autoCapitalize="none"
-                  textContentType="password"
-                  onSubmitEditing={handleLogin}
-                  leftSlot={
-                    <Ionicons
-                      name="lock-closed-outline"
-                      size={18}
-                      color={theme.colors.textSecondary}
-                    />
-                  }
-                  rightSlot={
-                    <Pressable
-                      accessibilityRole="button"
-                      accessibilityLabel={
-                        secure ? "Show password" : "Hide password"
-                      }
-                      onPress={toggleSecure}
-                      hitSlop={8}
-                    >
-                      <Ionicons
-                        name={secure ? "eye-off-outline" : "eye-outline"}
-                        size={20}
-                        color={theme.colors.textSecondary}
+          <View style={innerWrapStyle}>
+            <View style={layoutStyle}>
+              <View style={topContentStyle}>
+                <AppEntrance>
+                  <View style={headerStyle}>
+                    <View style={logoWrapStyle}>
+                      <Image
+                        source={require("../../../assets/logo.png")}
+                        style={logoStyle}
+                        resizeMode="contain"
                       />
+                    </View>
+
+                    <AppText
+                      variant="body"
+                      tone="secondary"
+                      style={subtitleStyle}
+                    >
+                      {LOGIN_HINT}
+                    </AppText>
+                  </View>
+                </AppEntrance>
+
+                <AppEntrance delay={40}>
+                  <View style={formStyle}>
+                    <View style={fieldBlockStyle}>
+                      <View
+                        style={[
+                          inputShellStyle,
+                          phoneError ? inputErrorShellStyle : null,
+                        ]}
+                      >
+                        <TextInput
+                          placeholder="+256 7XX XXX XXX"
+                          placeholderTextColor={theme.colors.textTertiary}
+                          keyboardType="phone-pad"
+                          autoCorrect={false}
+                          autoCapitalize="none"
+                          textContentType="telephoneNumber"
+                          value={phone}
+                          onChangeText={handlePhoneChange}
+                          onBlur={() => setPhoneTouched(true)}
+                          returnKeyType="next"
+                          onSubmitEditing={() => passwordRef.current?.focus()}
+                          style={inputStyle}
+                        />
+                      </View>
+
+                      {phoneError ? (
+                        <View style={{ marginTop: 8 }}>
+                          <AppText variant="caption" tone="error">
+                            {phoneError}
+                          </AppText>
+                        </View>
+                      ) : null}
+                    </View>
+
+                    <View style={fieldBlockStyle}>
+                      <View
+                        style={[
+                          inputShellStyle,
+                          passwordError ? inputErrorShellStyle : null,
+                        ]}
+                      >
+                        <TextInput
+                          ref={passwordRef}
+                          placeholder="Password"
+                          placeholderTextColor={theme.colors.textTertiary}
+                          secureTextEntry={secure}
+                          value={password}
+                          onChangeText={handlePasswordChange}
+                          onBlur={() => setPasswordTouched(true)}
+                          returnKeyType="done"
+                          autoCorrect={false}
+                          autoCapitalize="none"
+                          textContentType="password"
+                          onSubmitEditing={handleLogin}
+                          style={inputStyle}
+                        />
+
+                        <Pressable
+                          accessibilityRole="button"
+                          accessibilityLabel={
+                            secure ? "Show password" : "Hide password"
+                          }
+                          onPress={toggleSecure}
+                          hitSlop={8}
+                        >
+                          <Ionicons
+                            name={secure ? "eye-off-outline" : "eye-outline"}
+                            size={20}
+                            color={theme.colors.textSecondary}
+                          />
+                        </Pressable>
+                      </View>
+
+                      {passwordError ? (
+                        <View style={{ marginTop: 8 }}>
+                          <AppText variant="caption" tone="error">
+                            {passwordError}
+                          </AppText>
+                        </View>
+                      ) : null}
+                    </View>
+
+                    <View style={forgotWrapStyle}>
+                      <Pressable
+                        onPress={() => navigation.navigate("ForgotPassword")}
+                        style={({ pressed }) =>
+                          pressed ? { opacity: 0.72 } : null
+                        }
+                      >
+                        <AppText variant="bodySm" tone="secondary">
+                          Forgot Password?
+                        </AppText>
+                      </Pressable>
+                    </View>
+
+                    {submitError ? (
+                      <View style={{ marginBottom: 14 }}>
+                        <InlineAlert tone="error" message={submitError} />
+                      </View>
+                    ) : null}
+
+                    <Pressable
+                      onPress={handleLogin}
+                      disabled={!canSubmit}
+                      style={({ pressed }) => [
+                        buttonStyle,
+                        pressed && canSubmit ? { opacity: 0.9 } : null,
+                      ]}
+                    >
+                      {loading ? (
+                        <ActivityIndicator color={theme.colors.textInverse} />
+                      ) : (
+                        <AppText style={buttonTextStyle}>Log In</AppText>
+                      )}
                     </Pressable>
-                  }
-                />
+                  </View>
+                </AppEntrance>
               </View>
 
-              <View style={forgotWrapStyle}>
+              <View style={footerStyle}>
                 <Pressable
-                  onPress={() => navigation.navigate("ForgotPassword")}
-                  style={({ pressed }) => [
-                    forgotPressableStyle,
-                    pressed ? { opacity: 0.7 } : null,
-                  ]}
+                  onPress={handleOpenRegister}
+                  style={({ pressed }) => (pressed ? { opacity: 0.72 } : null)}
                 >
-                  <AppText variant="label" tone="link" weight="700">
-                    Forgot password?
-                  </AppText>
+                  <View style={footerRowStyle}>
+                    <AppText variant="bodySm" tone="secondary">
+                      Don&apos;t have an account?{" "}
+                    </AppText>
+                    <AppText variant="bodySm" tone="link" weight="700">
+                      Create Employer Account
+                    </AppText>
+                  </View>
                 </Pressable>
               </View>
-
-              {submitError ? (
-                <View style={fieldGroupStyle}>
-                  <InlineAlert tone="error" message={submitError} />
-                </View>
-              ) : null}
-
-              <View style={buttonWrapStyle}>
-                <AppButton
-                  title="Sign In"
-                  onPress={handleLogin}
-                  loading={loading}
-                  disabled={!canSubmit}
-                  variant="primary"
-                />
-              </View>
             </View>
-          </AppEntrance>
-
-          <View style={footerStyle}>
-            <Pressable
-              onPress={handleOpenRegister}
-              style={({ pressed }) => [
-                footerPrimaryLinkStyle,
-                pressed ? { opacity: 0.72 } : null,
-              ]}
-            >
-              <View style={signupRowStyle}>
-                <AppText variant="bodySm" tone="secondary">
-                  Want to post jobs?{" "}
-                </AppText>
-                <AppText variant="bodySm" tone="link" weight="700">
-                  Create Employer Account
-                </AppText>
-              </View>
-            </Pressable>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>

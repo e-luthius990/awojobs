@@ -1,12 +1,5 @@
-import React, { useCallback, useMemo } from "react";
-import {
-  Alert,
-  Linking,
-  Pressable,
-  Switch,
-  View,
-  type ViewStyle,
-} from "react-native";
+import React, { useCallback } from "react";
+import { Alert, Linking, Pressable, Switch, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import type { BottomTabScreenProps } from "@react-navigation/bottom-tabs";
 
@@ -21,86 +14,12 @@ const TERMS_URL = "https://awojobs.com/terms";
 const CONTACT_EMAIL = "awojobs@gmail.com";
 const WHATSAPP_NUMBER = "+256779799009";
 
+const FACEBOOK_URL = "https://facebook.com/awojobs";
+const TWITTER_URL = "https://twitter.com/awojobs";
+const TIKTOK_URL = "https://tiktok.com/@awojobs";
+
 export default function MyAccountGuestScreen({ navigation }: Props) {
   const { theme, isDark, toggleTheme } = useTheme();
-
-  const contentStyle = useMemo<ViewStyle>(
-    () => ({
-      gap: theme.spacing.xl,
-      paddingBottom: theme.spacing.xxxl,
-    }),
-    [theme.spacing.xl, theme.spacing.xxxl],
-  );
-
-  const headerStyle = useMemo<ViewStyle>(
-    () => ({
-      gap: theme.spacing.xs,
-    }),
-    [theme.spacing.xs],
-  );
-
-  const roleRowStyle = useMemo<ViewStyle>(
-    () => ({
-      flexDirection: "row",
-      gap: theme.spacing.sm,
-    }),
-    [theme.spacing.sm],
-  );
-
-  const sectionStyle = useMemo<ViewStyle>(
-    () => ({
-      gap: theme.spacing.md,
-    }),
-    [theme.spacing.md],
-  );
-
-  const subtleSectionStyle = useMemo<ViewStyle>(
-    () => ({
-      gap: theme.spacing.md,
-      opacity: 0.98,
-    }),
-    [theme.spacing.md],
-  );
-
-  const rowGroupStyle = useMemo<ViewStyle>(
-    () => ({
-      overflow: "hidden",
-      borderRadius: theme.radius.xl,
-      borderWidth: 1,
-      borderColor: theme.colors.borderDefault,
-      backgroundColor: theme.colors.bgSurface,
-    }),
-    [theme.colors.bgSurface, theme.colors.borderDefault, theme.radius.xl],
-  );
-
-  const preferenceRowStyle = useMemo<ViewStyle>(
-    () => ({
-      minHeight: 64,
-      paddingHorizontal: theme.spacing.md,
-      paddingVertical: theme.spacing.md,
-      flexDirection: "row",
-      alignItems: "center",
-      justifyContent: "space-between",
-      gap: theme.spacing.md,
-    }),
-    [theme.spacing.md],
-  );
-
-  const preferenceTextStyle = useMemo<ViewStyle>(
-    () => ({
-      flex: 1,
-      gap: theme.spacing.xs,
-    }),
-    [theme.spacing.xs],
-  );
-
-  const dividerStyle = useMemo<ViewStyle>(
-    () => ({
-      height: 1,
-      backgroundColor: theme.colors.borderMuted,
-    }),
-    [theme.colors.borderMuted],
-  );
 
   const openLogin = useCallback(
     (forcedRole: "employer" | "job_seeker") => {
@@ -121,197 +40,272 @@ export default function MyAccountGuestScreen({ navigation }: Props) {
     [navigation],
   );
 
-  const handleOpenTerms = useCallback(async () => {
-    try {
-      const supported = await Linking.canOpenURL(TERMS_URL);
-      if (!supported) {
-        Alert.alert("Unavailable", "Could not open the terms page.");
-        return;
-      }
-      await Linking.openURL(TERMS_URL);
-    } catch {
-      Alert.alert("Unavailable", "Could not open the terms page.");
-    }
-  }, []);
-
-  const handleOpenEmail = useCallback(async () => {
-    const url = `mailto:${CONTACT_EMAIL}`;
+  const handleOpenLink = useCallback(async (url: string) => {
     try {
       const supported = await Linking.canOpenURL(url);
-      if (!supported) {
-        Alert.alert("Unavailable", "Email is not available on this device.");
-        return;
-      }
+      if (!supported) return Alert.alert("Unavailable", "Cannot open link.");
       await Linking.openURL(url);
     } catch {
-      Alert.alert("Unavailable", "Could not open email.");
+      Alert.alert("Unavailable", "Cannot open link.");
     }
   }, []);
 
-  const handleOpenWhatsApp = useCallback(async () => {
+  const handleOpenTerms = useCallback(() => {
+    handleOpenLink(TERMS_URL);
+  }, [handleOpenLink]);
+
+  const handleOpenEmail = useCallback(() => {
+    handleOpenLink(`mailto:${CONTACT_EMAIL}`);
+  }, [handleOpenLink]);
+
+  const handleOpenWhatsApp = useCallback(() => {
     const digits = WHATSAPP_NUMBER.replace(/\D/g, "");
-    const url = `https://wa.me/${digits}`;
-    try {
-      const supported = await Linking.canOpenURL(url);
-      if (!supported) {
-        Alert.alert("Unavailable", "WhatsApp is not available on this device.");
-        return;
-      }
-      await Linking.openURL(url);
-    } catch {
-      Alert.alert("Unavailable", "Could not open WhatsApp.");
-    }
-  }, []);
+    handleOpenLink(`https://wa.me/${digits}`);
+  }, [handleOpenLink]);
 
   return (
     <AppScreen scroll>
-      <View style={contentStyle}>
-        <View style={headerStyle}>
-          <AppText variant="h3">Continue with AwoJobs</AppText>
+      <View
+        style={{ gap: theme.spacing.xl, paddingBottom: theme.spacing.xxxl }}
+      >
+        {/* 💎 HERO */}
+        <View style={{ gap: theme.spacing.sm }}>
+          <AppText variant="h1">Unlock full access to AwoJobs</AppText>
+
           <AppText variant="bodySm" tone="secondary">
-            Choose your account type to continue.
+            You’re browsing as a guest. Upgrade to Premium to unlock all jobs,
+            faster applications, and better matches.
           </AppText>
+
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+            <Ionicons
+              name="lock-closed"
+              size={14}
+              color={theme.colors.textTertiary}
+            />
+            <AppText variant="caption" tone="secondary">
+              Guest access is limited
+            </AppText>
+          </View>
         </View>
 
-        <View style={roleRowStyle}>
-          <RolePill
-            title="Employer"
-            selected={false}
+        {/* 💎 VALUE PROPS */}
+        <View style={{ gap: theme.spacing.md }}>
+          <AppText variant="titleLg">What you unlock</AppText>
+
+          <FeatureItem
+            icon="search-outline"
+            title="Full job access"
+            desc="Browse all national and premium job listings"
+          />
+
+          <FeatureItem
+            icon="flash-outline"
+            title="Faster applications"
+            desc="Apply instantly with saved profile details"
+          />
+
+          <FeatureItem
+            icon="briefcase-outline"
+            title="Better matches"
+            desc="Get jobs tailored to your location and skills"
+          />
+        </View>
+
+        {/* 🚀 CTA */}
+        <Pressable
+          onPress={() => navigation.navigate("Premium" as never)}
+          style={{
+            height: 56,
+            borderRadius: theme.radius.lg,
+            backgroundColor: theme.colors.primary,
+            alignItems: "center",
+            justifyContent: "center",
+            flexDirection: "row",
+            gap: 8,
+            ...theme.shadows.level2,
+          }}
+        >
+          <Ionicons name="sparkles" size={16} color="#fff" />
+
+          <AppText variant="labelLg" tone="inverse">
+            Upgrade to Premium
+          </AppText>
+        </Pressable>
+
+        {/* 👔 EMPLOYER LOGIN */}
+        <AppText
+          style={{ textAlign: "center", color: theme.colors.textSecondary }}
+        >
+          Are you an employer?{" "}
+          <AppText
             onPress={() => openLogin("employer")}
+            style={{ color: theme.colors.primary, fontWeight: "600" }}
+          >
+            Sign in here
+          </AppText>
+        </AppText>
+
+        {/* 🧰 SUPPORT */}
+        <Section title="Support">
+          <SupportRow
+            icon="logo-whatsapp"
+            label="WhatsApp"
+            value={WHATSAPP_NUMBER}
+            onPress={handleOpenWhatsApp}
           />
-          <RolePill
-            title="Job Seeker"
-            selected={false}
-            onPress={() => openLogin("job_seeker")}
+
+          <Divider />
+
+          <SupportRow
+            icon="mail-outline"
+            label="Email"
+            value={CONTACT_EMAIL}
+            onPress={handleOpenEmail}
           />
-        </View>
+        </Section>
 
-        <View style={sectionStyle}>
-          <AppText variant="titleLg">Support</AppText>
+        {/* 🌐 SOCIALS */}
+        <Section title="Follow us">
+          <SupportRow
+            icon="logo-facebook"
+            label="Facebook"
+            meta="Daily job updates"
+            onPress={() => handleOpenLink(FACEBOOK_URL)}
+          />
 
-          <View style={rowGroupStyle}>
-            <SupportRow
-              label="WhatsApp"
-              meta="Fastest help"
-              value={WHATSAPP_NUMBER}
-              onPress={handleOpenWhatsApp}
-            />
-            <View style={dividerStyle} />
-            <SupportRow
-              label="Email"
-              meta="Account support"
-              value={CONTACT_EMAIL}
-              onPress={handleOpenEmail}
+          <Divider />
+
+          <SupportRow
+            icon="logo-twitter"
+            label="Twitter / X"
+            meta="Announcements & updates"
+            onPress={() => handleOpenLink(TWITTER_URL)}
+          />
+
+          <Divider />
+
+          <SupportRow
+            icon="logo-tiktok"
+            label="TikTok"
+            meta="Career tips & highlights"
+            onPress={() => handleOpenLink(TIKTOK_URL)}
+          />
+        </Section>
+
+        {/* 📜 LEGAL */}
+        <Section title="Legal">
+          <SupportRow
+            icon="document-text-outline"
+            label="Terms of Use"
+            onPress={handleOpenTerms}
+          />
+        </Section>
+
+        {/* ⚙️ PREFERENCES */}
+        <Section title="Preferences">
+          <View
+            style={{
+              flexDirection: "row",
+              justifyContent: "space-between",
+              alignItems: "center",
+              padding: theme.spacing.md,
+              borderRadius: theme.radius.xl,
+              borderWidth: 1,
+              borderColor: theme.colors.borderDefault,
+              backgroundColor: theme.colors.bgSurface,
+            }}
+          >
+            <AppText variant="title">Dark mode</AppText>
+
+            <Switch
+              value={Boolean(isDark)}
+              onValueChange={() => toggleTheme()}
+              trackColor={{
+                false: theme.colors.borderMuted,
+                true: theme.colors.primary,
+              }}
+              thumbColor={theme.colors.bgSurfaceElevated}
             />
           </View>
-        </View>
-
-        <View style={sectionStyle}>
-          <AppText variant="titleLg">Legal</AppText>
-
-          <View style={rowGroupStyle}>
-            <SupportRow
-              label="Terms of Use"
-              meta="Read legal terms"
-              value="Open terms"
-              onPress={handleOpenTerms}
-            />
-          </View>
-        </View>
-
-        <View style={subtleSectionStyle}>
-          <AppText variant="titleLg">Preferences</AppText>
-
-          <View style={rowGroupStyle}>
-            <View style={preferenceRowStyle}>
-              <View style={preferenceTextStyle}>
-                <AppText variant="title">Dark mode</AppText>
-              </View>
-
-              <Switch
-                value={Boolean(isDark)}
-                onValueChange={() => {
-                  void toggleTheme();
-                }}
-                trackColor={{
-                  false: theme.colors.borderMuted,
-                  true: theme.colors.primary,
-                }}
-                thumbColor={theme.colors.bgSurfaceElevated}
-              />
-            </View>
-          </View>
-        </View>
+        </Section>
       </View>
     </AppScreen>
   );
 }
 
-function RolePill({
+/* ---------------- COMPONENTS ---------------- */
+
+function FeatureItem({
+  icon,
   title,
-  selected,
-  onPress,
+  desc,
 }: {
+  icon: keyof typeof Ionicons.glyphMap;
   title: string;
-  selected: boolean;
-  onPress: () => void;
+  desc: string;
 }) {
   const { theme } = useTheme();
 
-  const baseStyle = useMemo<ViewStyle>(
-    () => ({
-      flex: 1,
-      minHeight: 48,
-      borderRadius: theme.radius.pill,
-      paddingHorizontal: theme.spacing.lg,
-      alignItems: "center",
-      justifyContent: "center",
-      borderWidth: 1,
-      borderColor: selected ? theme.colors.primary : theme.colors.borderDefault,
-      backgroundColor: selected ? theme.colors.primary : theme.colors.bgSurface,
-    }),
-    [
-      selected,
-      theme.colors.bgSurface,
-      theme.colors.borderDefault,
-      theme.colors.primary,
-      theme.radius.pill,
-      theme.spacing.lg,
-    ],
+  return (
+    <View
+      style={{
+        flexDirection: "row",
+        gap: theme.spacing.md,
+        padding: theme.spacing.md,
+        borderRadius: theme.radius.xl,
+        backgroundColor: theme.colors.bgSurface,
+        borderWidth: 1,
+        borderColor: theme.colors.borderMuted,
+      }}
+    >
+      <Ionicons name={icon} size={20} color={theme.colors.primary} />
+
+      <View style={{ flex: 1, gap: 2 }}>
+        <AppText variant="labelLg">{title}</AppText>
+        <AppText variant="bodySm" tone="secondary">
+          {desc}
+        </AppText>
+      </View>
+    </View>
   );
+}
+
+function Section({
+  title,
+  children,
+}: {
+  title: string;
+  children: React.ReactNode;
+}) {
+  const { theme } = useTheme();
 
   return (
-    <Pressable
-      accessibilityRole="button"
-      onPress={onPress}
-      style={({ pressed }) => [
-        baseStyle,
-        pressed
-          ? {
-              backgroundColor: selected
-                ? theme.colors.primary
-                : theme.colors.bgSurfaceElevated,
-            }
-          : null,
-      ]}
-    >
-      <AppText
-        variant="labelLg"
-        weight="700"
-        tone={selected ? "inverse" : "default"}
+    <View style={{ gap: theme.spacing.md }}>
+      <AppText variant="titleLg">{title}</AppText>
+
+      <View
+        style={{
+          borderRadius: theme.radius.xl,
+          overflow: "hidden",
+          borderWidth: 1,
+          borderColor: theme.colors.borderDefault,
+        }}
       >
-        {title}
-      </AppText>
-    </Pressable>
+        {children}
+      </View>
+    </View>
   );
 }
 
 function SupportRow({
+  icon,
   label,
   meta,
   value,
   onPress,
 }: {
+  icon?: keyof typeof Ionicons.glyphMap;
   label: string;
   meta?: string;
   value?: string;
@@ -319,41 +313,36 @@ function SupportRow({
 }) {
   const { theme } = useTheme();
 
-  const rowStyle = useMemo<ViewStyle>(
-    () => ({
-      minHeight: 68,
-      paddingHorizontal: theme.spacing.md,
-      paddingVertical: theme.spacing.md,
-      flexDirection: "row",
-      alignItems: "center",
-      justifyContent: "space-between",
-      gap: theme.spacing.md,
-      backgroundColor: theme.colors.bgSurface,
-    }),
-    [theme.colors.bgSurface, theme.spacing.md],
-  );
-
-  const textWrapStyle = useMemo<ViewStyle>(
-    () => ({
-      flex: 1,
-      gap: theme.spacing.xs,
-    }),
-    [theme.spacing.xs],
-  );
-
   return (
     <Pressable
-      accessibilityRole="button"
       onPress={onPress}
-      style={({ pressed }) => [
-        rowStyle,
-        pressed ? { backgroundColor: theme.colors.bgSurfaceElevated } : null,
-      ]}
+      style={({ pressed }) => ({
+        flexDirection: "row",
+        alignItems: "center",
+        padding: theme.spacing.md,
+        backgroundColor: pressed
+          ? theme.colors.bgSurfaceElevated
+          : theme.colors.bgSurface,
+        gap: theme.spacing.sm,
+      })}
     >
-      <View style={textWrapStyle}>
-        <AppText variant="labelLg" weight="700">
-          {label}
-        </AppText>
+      {icon ? (
+        <View
+          style={{
+            width: 34,
+            height: 34,
+            borderRadius: 10,
+            alignItems: "center",
+            justifyContent: "center",
+            backgroundColor: theme.colors.bgSurfaceElevated,
+          }}
+        >
+          <Ionicons name={icon} size={18} color={theme.colors.primary} />
+        </View>
+      ) : null}
+
+      <View style={{ flex: 1 }}>
+        <AppText variant="labelLg">{label}</AppText>
 
         {meta ? (
           <AppText variant="bodySm" tone="secondary">
@@ -362,11 +351,7 @@ function SupportRow({
         ) : null}
 
         {value ? (
-          <AppText
-            variant="bodySm"
-            numberOfLines={1}
-            style={{ color: theme.colors.primary }}
-          >
+          <AppText variant="caption" style={{ color: theme.colors.primary }}>
             {value}
           </AppText>
         ) : null}
@@ -378,5 +363,17 @@ function SupportRow({
         color={theme.colors.textTertiary}
       />
     </Pressable>
+  );
+}
+
+function Divider() {
+  const { theme } = useTheme();
+  return (
+    <View
+      style={{
+        height: 1,
+        backgroundColor: theme.colors.borderMuted,
+      }}
+    />
   );
 }

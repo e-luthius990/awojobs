@@ -10,7 +10,6 @@ import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { useNavigation } from "@react-navigation/native";
 
 import { supabase } from "../../core/supabase";
-import { ENV } from "../../env";
 import { JobWithCoords } from "../../jobs/jobs.types";
 import JobCard from "../../ui/components/job-card/JobCard";
 
@@ -63,9 +62,8 @@ export default function SavedJobsScreen() {
       } = await supabase.auth.getSession();
 
       const user = session?.user ?? null;
-      const token = session?.access_token ?? null;
 
-      if (!user || !token) {
+      if (!user) {
         setIsSignedIn(false);
         setRole(null);
         setSavedIds([]);
@@ -82,6 +80,7 @@ export default function SavedJobsScreen() {
         .maybeSingle();
 
       if (profileError || !profile) {
+        console.log("SAVED_PROFILE_ERROR", profileError);
         setRole(null);
         setSavedIds([]);
         setJobs([]);
@@ -106,6 +105,7 @@ export default function SavedJobsScreen() {
         .limit(MAX_SAVED_FETCH);
 
       if (savedError) {
+        console.log("SAVED_ROWS_ERROR", savedError);
         setSavedIds([]);
         setJobs([]);
         setError("Could not load your saved jobs right now.");
@@ -118,6 +118,8 @@ export default function SavedJobsScreen() {
             .filter((id): id is string => typeof id === "string")
         : [];
 
+      console.log("SAVED_JOB_IDS", ids);
+
       setSavedIds(ids);
 
       if (ids.length === 0) {
@@ -125,30 +127,24 @@ export default function SavedJobsScreen() {
         return;
       }
 
-      const res = await fetch(
-        `${ENV.SUPABASE_URL}/functions/v1/get_saved_jobs`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({
-            job_ids: ids,
-          }),
-        },
-      );
+      const { data: fetchedJobsRaw, error: jobsError } = await supabase
+        .from("jobs")
+        .select("*")
+        .in("id", ids)
+        .eq("status", "active");
 
-      if (!res.ok) {
+      if (jobsError) {
+        console.log("SAVED_JOBS_QUERY_ERROR", jobsError);
         setJobs([]);
         setError("Could not load your saved jobs right now.");
         return;
       }
 
-      const json = await res.json();
-      const fetchedJobs: JobWithCoords[] = Array.isArray(json.jobs)
-        ? json.jobs
+      const fetchedJobs: JobWithCoords[] = Array.isArray(fetchedJobsRaw)
+        ? (fetchedJobsRaw as JobWithCoords[])
         : [];
+
+      console.log("SAVED_JOBS_COUNT", fetchedJobs.length);
 
       const orderMap = new Map(ids.map((id, index) => [id, index]));
       fetchedJobs.sort(
@@ -156,7 +152,14 @@ export default function SavedJobsScreen() {
       );
 
       setJobs(fetchedJobs);
-    } catch {
+
+      if (ids.length > 0 && fetchedJobs.length === 0) {
+        setError(
+          "Your saved jobs were found, but none of them are currently visible.",
+        );
+      }
+    } catch (err) {
+      console.log("LOAD_SAVED_JOBS_FATAL", err);
       setSavedIds([]);
       setJobs([]);
       setError("Could not load your saved jobs right now.");
@@ -258,7 +261,7 @@ export default function SavedJobsScreen() {
     );
   }
 
-  if (error) {
+  if (error && savedIds.length === 0) {
     return (
       <AppScreen centerContent>
         <EmptyState
@@ -291,8 +294,18 @@ export default function SavedJobsScreen() {
     return (
       <AppScreen centerContent>
         <EmptyState
-          title="Saved jobs unavailable"
-          message="Some saved jobs may have expired or are no longer visible."
+          title="Saved jobs found"
+          message={
+            error ??
+            "Your saved jobs exist, but none are currently available to show."
+          }
+          action={
+            <AppButton
+              title="Try Again"
+              onPress={() => void loadSavedJobs()}
+              variant="primary"
+            />
+          }
         />
       </AppScreen>
     );

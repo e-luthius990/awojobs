@@ -14,7 +14,6 @@ import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
-  Image,
   StyleSheet,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
@@ -117,6 +116,20 @@ export default function VerifyOtpScreen() {
     return () => clearInterval(interval);
   }, [cooldown]);
 
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      inputRef.current?.focus();
+    }, 250);
+
+    return () => clearTimeout(timer);
+  }, []);
+
+  const focusOtpInput = useCallback(() => {
+    requestAnimationFrame(() => {
+      inputRef.current?.focus();
+    });
+  }, []);
+
   const triggerShake = useCallback(() => {
     Animated.sequence([
       Animated.timing(shakeAnim, {
@@ -162,6 +175,7 @@ export default function VerifyOtpScreen() {
     if (otp.length !== OTP_LENGTH) {
       setError("Enter the 6-digit code.");
       triggerShake();
+      focusOtpInput();
       return;
     }
 
@@ -186,7 +200,7 @@ export default function VerifyOtpScreen() {
         setOtp("");
         triggerShake();
         setError(result.error.message);
-        inputRef.current?.focus();
+        focusOtpInput();
         return;
       }
 
@@ -222,6 +236,7 @@ export default function VerifyOtpScreen() {
     }
   }, [
     canonicalPhone,
+    focusOtpInput,
     intent,
     loading,
     otp,
@@ -252,13 +267,13 @@ export default function VerifyOtpScreen() {
 
       setCooldown(RESEND_SECONDS);
       setOtp("");
-      inputRef.current?.focus();
+      focusOtpInput();
     } finally {
       if (isMountedRef.current) {
         setResending(false);
       }
     }
-  }, [canonicalPhone, cooldown, loading, resending]);
+  }, [canonicalPhone, cooldown, focusOtpInput, loading, resending]);
 
   const handleOtpChange = useCallback(
     (text: string) => {
@@ -275,10 +290,6 @@ export default function VerifyOtpScreen() {
     }
   }, [otp, loading, handleVerify]);
 
-  const handleBackToLogin = useCallback(() => {
-    navigation.popToTop();
-  }, [navigation]);
-
   const styles = useMemo(
     () =>
       StyleSheet.create({
@@ -287,128 +298,101 @@ export default function VerifyOtpScreen() {
         },
         content: {
           flexGrow: 1,
-          paddingTop: theme.spacing.md,
-          paddingBottom: theme.spacing.lg,
           paddingHorizontal: theme.spacing.screenX,
+          paddingTop: 28,
+          paddingBottom: 32,
         },
-        brandSection: {
-          marginBottom: theme.spacing.xl,
+        innerWrap: {
+          width: "100%",
+          maxWidth: 440,
+          alignSelf: "center",
         },
-        brandRow: {
-          flexDirection: "row",
+        header: {
           alignItems: "center",
-          paddingTop: theme.spacing.xs,
-          paddingHorizontal: 2,
+          marginBottom: 28,
+          paddingTop: 12,
         },
-        navMark: {
-          width: 44,
-          height: 44,
-          borderRadius: 16,
-          backgroundColor: theme.colors.bgSurface,
-          borderWidth: 1,
-          borderColor: theme.colors.borderDefault,
-          alignItems: "center",
-          justifyContent: "center",
-          marginRight: theme.spacing.md,
-          ...theme.shadows.level1,
-        },
-        brandMark: {
-          width: 52,
-          height: 52,
-          borderRadius: 16,
-          backgroundColor: theme.colors.bgSurface,
-          borderWidth: 1,
-          borderColor: theme.colors.borderDefault,
+        backButton: {
+          position: "absolute",
+          top: 0,
+          left: 0,
+          width: 40,
+          height: 40,
+          borderRadius: 20,
           alignItems: "center",
           justifyContent: "center",
-          marginRight: theme.spacing.md,
-          ...theme.shadows.level1,
+          zIndex: 2,
         },
-        brandLogo: {
-          width: 72,
-          height: 72,
+        title: {
+          textAlign: "center",
+          marginTop: 44,
+          marginBottom: 10,
+          fontSize: 30,
+          lineHeight: 36,
+          letterSpacing: -0.5,
+          color: theme.colors.textPrimary,
         },
-        brandTextWrap: {
-          flex: 1,
+        subtitle: {
+          textAlign: "center",
+          maxWidth: 320,
+          lineHeight: 23,
+          fontSize: 16,
         },
-        brandSubtitle: {
-          marginTop: theme.spacing.xxs,
-        },
-        bodyWrap: {
-          flex: 1,
-          justifyContent: "center",
-          paddingTop: theme.spacing.lg,
-        },
-        formShell: {
-          borderRadius: 28,
-          backgroundColor: theme.colors.bgSurfaceElevated,
-          borderWidth: 1,
-          borderColor: theme.colors.borderDefault,
-          padding: theme.spacing.lg,
-          ...theme.shadows.level2,
-        },
-        formTop: {
-          marginBottom: theme.spacing.md,
-        },
-        formTopHint: {
-          marginTop: 6,
+        form: {
+          width: "100%",
         },
         otpWrap: {
-          marginBottom: theme.spacing.md,
+          marginBottom: 14,
+        },
+        otpPressable: {
+          position: "relative",
         },
         otpContainer: {
           flexDirection: "row",
           justifyContent: "space-between",
-          marginBottom: theme.spacing.sm,
+          marginBottom: 12,
         },
         otpBox: {
           flex: 1,
           maxWidth: 52,
-          height: 60,
-          borderRadius: theme.radius.lg,
-          backgroundColor: theme.colors.inputBg,
+          height: 58,
+          borderRadius: 16,
+          backgroundColor: theme.colors.bgSurface,
           borderWidth: 1,
-          borderColor: theme.colors.inputBorder,
+          borderColor: theme.colors.borderDefault,
           alignItems: "center",
           justifyContent: "center",
         },
         otpBoxSpacer: {
-          marginRight: theme.spacing.xs,
+          marginRight: 8,
         },
         otpBoxActive: {
-          borderColor: theme.colors.inputBorderFocused,
-          backgroundColor: theme.colors.bgSurfaceElevated,
+          borderColor: theme.colors.primary,
+          backgroundColor: theme.colors.bgSurface,
         },
         otpBoxFilled: {
           borderColor: theme.colors.borderStrong,
         },
         otpBoxError: {
-          borderColor: theme.colors.inputBorderError,
+          borderColor: theme.colors.error,
         },
         hiddenInput: {
           position: "absolute",
-          opacity: 0,
-          width: 1,
-          height: 1,
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          opacity: 0.02,
+          zIndex: 5,
         },
-        footerActions: {
-          marginTop: theme.spacing.md,
+        buttonWrap: {
+          marginTop: 8,
         },
         resendWrap: {
           alignItems: "center",
           justifyContent: "center",
           minHeight: 44,
-          marginTop: theme.spacing.sm,
-        },
-        footer: {
-          alignItems: "center",
-          paddingTop: theme.spacing.sm,
-        },
-        helperRow: {
-          flexDirection: "row",
-          alignItems: "center",
-          justifyContent: "center",
-          flexWrap: "wrap",
+          marginTop: 10,
         },
       }),
     [theme],
@@ -429,96 +413,79 @@ export default function VerifyOtpScreen() {
           showsVerticalScrollIndicator={false}
           bounces={false}
         >
-          <AppEntrance>
-            <View style={styles.brandSection}>
-              <View style={styles.brandRow}>
+          <View style={styles.innerWrap}>
+            <AppEntrance>
+              <View style={styles.header}>
                 <Pressable
                   onPress={() => navigation.goBack()}
                   accessibilityRole="button"
                   accessibilityLabel="Go back"
                   style={({ pressed }) => [
-                    styles.navMark,
-                    pressed ? { opacity: 0.8 } : null,
+                    styles.backButton,
+                    pressed ? { opacity: 0.72 } : null,
                   ]}
                 >
                   <Ionicons
                     name="chevron-back"
-                    size={22}
+                    size={24}
                     color={theme.colors.textPrimary}
                   />
                 </Pressable>
 
-                <View style={styles.brandMark}>
-                  <Image
-                    source={require("../../../assets/logo.png")}
-                    style={styles.brandLogo}
-                    resizeMode="contain"
-                  />
-                </View>
+                <AppText variant="h2" weight="700" style={styles.title}>
+                  Verify code
+                </AppText>
 
-                <View style={styles.brandTextWrap}>
-                  <AppText variant="labelLg" weight="700">
-                    AwoJobs
-                  </AppText>
-                  <AppText
-                    variant="caption"
-                    tone="secondary"
-                    style={styles.brandSubtitle}
-                  >
-                    Verification
-                  </AppText>
-                </View>
+                <AppText
+                  variant="body"
+                  tone="secondary"
+                  style={styles.subtitle}
+                >
+                  Enter the 6-digit code sent to {maskedPhone}.
+                </AppText>
               </View>
-            </View>
-          </AppEntrance>
+            </AppEntrance>
 
-          <AppEntrance delay={40}>
-            <View style={styles.bodyWrap}>
-              <View style={styles.formShell}>
-                <View style={styles.formTop}>
-                  <AppText variant="titleLg">Verification code</AppText>
-                  <AppText
-                    variant="bodySm"
-                    tone="secondary"
-                    style={styles.formTopHint}
-                  >
-                    Enter the 6-digit code sent to {maskedPhone}.
-                  </AppText>
-                </View>
-
+            <AppEntrance delay={40}>
+              <View style={styles.form}>
                 <View style={styles.otpWrap}>
-                  <Animated.View
-                    style={[
-                      styles.otpContainer,
-                      { transform: [{ translateX: shakeAnim }] },
-                    ]}
+                  <Pressable
+                    style={styles.otpPressable}
+                    onPress={focusOtpInput}
                   >
-                    {Array.from({ length: OTP_LENGTH }).map((_, index) => {
-                      const isActive = index === otp.length;
-                      const isFilled = Boolean(otp[index]);
-                      const isLast = index === OTP_LENGTH - 1;
+                    <Animated.View
+                      style={[
+                        styles.otpContainer,
+                        { transform: [{ translateX: shakeAnim }] },
+                      ]}
+                    >
+                      {Array.from({ length: OTP_LENGTH }).map((_, index) => {
+                        const isActive = index === otp.length;
+                        const isFilled = Boolean(otp[index]);
+                        const isLast = index === OTP_LENGTH - 1;
 
-                      return (
-                        <Pressable
-                          key={index}
-                          onPress={() => inputRef.current?.focus()}
-                          style={[
-                            styles.otpBox,
-                            !isLast ? styles.otpBoxSpacer : null,
-                            isActive ? styles.otpBoxActive : null,
-                            isFilled ? styles.otpBoxFilled : null,
-                            error ? styles.otpBoxError : null,
-                          ]}
-                        >
-                          <AppText
-                            variant="h3"
-                            style={{ color: theme.colors.textPrimary }}
+                        return (
+                          <Pressable
+                            key={index}
+                            onPress={focusOtpInput}
+                            style={[
+                              styles.otpBox,
+                              !isLast ? styles.otpBoxSpacer : null,
+                              isActive ? styles.otpBoxActive : null,
+                              isFilled ? styles.otpBoxFilled : null,
+                              error ? styles.otpBoxError : null,
+                            ]}
                           >
-                            {otp[index] ?? ""}
-                          </AppText>
-                        </Pressable>
-                      );
-                    })}
+                            <AppText
+                              variant="h3"
+                              style={{ color: theme.colors.textPrimary }}
+                            >
+                              {otp[index] ?? ""}
+                            </AppText>
+                          </Pressable>
+                        );
+                      })}
+                    </Animated.View>
 
                     <TextInput
                       ref={inputRef}
@@ -530,8 +497,10 @@ export default function VerifyOtpScreen() {
                       maxLength={OTP_LENGTH}
                       style={styles.hiddenInput}
                       autoFocus
+                      showSoftInputOnFocus
+                      caretHidden
                     />
-                  </Animated.View>
+                  </Pressable>
 
                   {error ? (
                     <InlineAlert tone="error" message={error} />
@@ -543,7 +512,7 @@ export default function VerifyOtpScreen() {
                   )}
                 </View>
 
-                <View style={styles.footerActions}>
+                <View style={styles.buttonWrap}>
                   <AppButton
                     title="Continue"
                     onPress={() => void handleVerify()}
@@ -551,47 +520,31 @@ export default function VerifyOtpScreen() {
                     disabled={loading || otp.length !== OTP_LENGTH}
                     variant="primary"
                   />
-
-                  <Pressable
-                    onPress={() => void handleResend()}
-                    disabled={cooldown > 0 || loading || resending}
-                    style={({ pressed }) => [
-                      styles.resendWrap,
-                      pressed && cooldown <= 0 && !loading && !resending
-                        ? { opacity: 0.72 }
-                        : null,
-                      cooldown > 0 || loading || resending
-                        ? { opacity: 0.5 }
-                        : null,
-                    ]}
-                  >
-                    <AppText variant="labelLg" tone="link" weight="700">
-                      {resending
-                        ? "Resending..."
-                        : cooldown > 0
-                          ? `Resend in ${cooldown}s`
-                          : "Resend code"}
-                    </AppText>
-                  </Pressable>
                 </View>
-              </View>
-            </View>
-          </AppEntrance>
 
-          <View style={styles.footer}>
-            <Pressable
-              onPress={handleBackToLogin}
-              style={({ pressed }) => [pressed ? { opacity: 0.72 } : null]}
-            >
-              <View style={styles.helperRow}>
-                <AppText variant="bodySm" tone="secondary">
-                  Back to{" "}
-                </AppText>
-                <AppText variant="bodySm" tone="link" weight="700">
-                  Sign In
-                </AppText>
+                <Pressable
+                  onPress={() => void handleResend()}
+                  disabled={cooldown > 0 || loading || resending}
+                  style={({ pressed }) => [
+                    styles.resendWrap,
+                    pressed && cooldown <= 0 && !loading && !resending
+                      ? { opacity: 0.72 }
+                      : null,
+                    cooldown > 0 || loading || resending
+                      ? { opacity: 0.5 }
+                      : null,
+                  ]}
+                >
+                  <AppText variant="labelLg" tone="link" weight="700">
+                    {resending
+                      ? "Resending..."
+                      : cooldown > 0
+                        ? `Resend in ${cooldown}s`
+                        : "Resend code"}
+                  </AppText>
+                </Pressable>
               </View>
-            </Pressable>
+            </AppEntrance>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>

@@ -9,14 +9,8 @@ const supabase = createClient(
 
 const AT_API_KEY = Deno.env.get("AFRICAS_TALKING_API_KEY")!;
 const AT_USERNAME = Deno.env.get("AFRICAS_TALKING_USERNAME")!;
-const AT_SENDER = Deno.env.get("AFRICAS_TALKING_SENDER_ID")!;
-
 const TOKEN_EXP_MIN = 10;
 const RATE_LIMIT_SECONDS = 60;
-
-/* =====================================================
-   HELPERS
-===================================================== */
 
 function normalizeUgPhone(phone: string): string {
   if (!phone) throw new Error("Phone required");
@@ -28,18 +22,14 @@ function normalizeUgPhone(phone: string): string {
   if (digits.startsWith("256") && digits.length === 12) {
     normalized = digits;
   } else if (digits.startsWith("0") && digits.length === 10) {
-    normalized = "256" + digits.slice(1);
+    normalized = `256${digits.slice(1)}`;
   } else if (digits.length === 9 && digits.startsWith("7")) {
-    normalized = "256" + digits;
+    normalized = `256${digits}`;
   } else {
-    throw new Error("Invalid Uganda phone format");
-  }
-
-  if (!/^2567\d{8}$/.test(normalized)) {
     throw new Error("Invalid Uganda mobile number");
   }
 
-  return "+" + normalized; // 🔥 THIS LINE FIXES EVERYTHING
+  return `+${normalized}`;
 }
 
 function generateOTP(): string {
@@ -71,19 +61,23 @@ async function sendSMS(phone: string, message: string) {
         username: AT_USERNAME,
         to: phone,
         message,
-        from: AT_SENDER,
       }),
     }
   );
 
+  const rawBody = await response.text();
+
+  console.log("[password_reset_request:sms_response]", {
+    status: response.status,
+    ok: response.ok,
+    to: phone,
+    body: rawBody,
+  });
+
   if (!response.ok) {
-    console.error("SMS failed:", await response.text());
+    throw new Error(`SMS request failed: ${response.status} ${rawBody}`);
   }
 }
-
-/* =====================================================
-   EDGE ENTRY
-===================================================== */
 
 serve(async (req) => {
   if (req.method !== "POST") {
@@ -92,80 +86,89 @@ serve(async (req) => {
 
   try {
     const body = await req.json().catch(() => null);
-    if (!body?.phone) {
+
+    if (!body?.phone || typeof body.phone !== "string") {
       return Response.json({ ok: true });
     }
 
-    const normalized = normalizeUgPhone(body.phone);
+    const normalizedPhone = normalizeUgPhone(body.phone);
 
-    /* -----------------------------------------
-       RATE LIMIT
-    ------------------------------------------ */
+    const { data: user, error: userError } = await supabase
+      .from("profiles")
+      .select("id")
+      .eq("phone_number", normalizedPhone)
+      .maybeSingle();
+
+    if (userError) {
+      console.error("[password_reset_request:user_lookup]", userError);
+      return Response.json({ ok: true });
+    }
+
+    if (!user) {
+      console.log("[password_reset_request:user_not_found]", {
+        normalizedPhone,
+      });
+      return Response.json({ ok: true });
+    }
 
     const since = new Date(Date.now() - RATE_LIMIT_SECONDS * 1000).toISOString();
 
-    const { count } = await supabase
+    const { data: recentToken, error: rateLimitError } = await supabase
       .from("password_reset_tokens")
-      .select("id", { count: "exact", head: true })
-      .eq("phone_number", normalized)
-      .gte("created_at", since);
-
-    if ((count ?? 0) > 0) {
-      return Response.json({ ok: true });
-    }
-
-    /* -----------------------------------------
-       LOOKUP USER (NO ENUMERATION)
-    ------------------------------------------ */
-
-    const { data: user } = await supabase
-      .from("profiles")
       .select("id")
-      .eq("phone_number", normalized)
+      .eq("user_id", user.id)
+      .gte("created_at", since)
+      .limit(1)
       .maybeSingle();
 
-    if (!user) {
+    if (rateLimitError) {
+      console.error("[password_reset_request:rate_limit]", rateLimitError);
       return Response.json({ ok: true });
     }
 
-    /* -----------------------------------------
-       CLEAN OLD TOKENS
-    ------------------------------------------ */
+    if (recentToken) {
+      return Response.json({ ok: true });
+    }
 
-    await supabase
+    const { error: deleteError } = await supabase
       .from("password_reset_tokens")
       .delete()
       .eq("user_id", user.id);
 
-    /* -----------------------------------------
-       CREATE NEW TOKEN
-    ------------------------------------------ */
+    if (deleteError) {
+      console.error("[password_reset_request:delete_old_tokens]", deleteError);
+      return Response.json({ ok: true });
+    }
 
     const otp = generateOTP();
     const tokenHash = await sha256(otp);
-
-    const expires = new Date(
+    const expiresAt = new Date(
       Date.now() + TOKEN_EXP_MIN * 60 * 1000
     ).toISOString();
 
-    await supabase.from("password_reset_tokens").insert({
-      user_id: user.id,
-      phone_number: normalized,
-      token_hash: tokenHash,
-      expires_at: expires,
-      attempts: 0,
-    });
+    const { error: insertError } = await supabase
+      .from("password_reset_tokens")
+      .insert({
+        user_id: user.id,
+        token_hash: tokenHash,
+        expires_at: expiresAt,
+        used: false,
+      });
 
-    /* -----------------------------------------
-       SEND SMS
-    ------------------------------------------ */
+    if (insertError) {
+      console.error("[password_reset_request:insert_token]", insertError);
+      return Response.json({ ok: true });
+    }
+
+    console.log("[password_reset_request:before_sms]", {
+      normalizedPhone,
+    });
 
     const message = `AwoJobs reset code: ${otp}. Expires in ${TOKEN_EXP_MIN} minutes.`;
 
-    await sendSMS(normalized, message);
+    await sendSMS(normalizedPhone, message);
 
     return Response.json({ ok: true });
-
   } catch (err) {
     console.error("[password_reset_request]", err);
     return Response.json({ ok: true });

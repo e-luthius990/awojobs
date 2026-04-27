@@ -10,10 +10,11 @@ import { StatusBadge } from "../../StatusBadge";
 type Props = {
   job: JobWithCoords;
   showLocation?: boolean;
+  compact?: boolean;
 };
 
 function formatPayType(value: string | null | undefined) {
-  if (!value) return "Not specified";
+  if (!value || value === "not_specified") return "Pay not specified";
 
   return value
     .replace(/_/g, " ")
@@ -32,50 +33,61 @@ function formatShortDate(date: Date | null): string | null {
   return new Intl.DateTimeFormat("en-UG", {
     day: "numeric",
     month: "short",
-    year: "numeric",
   }).format(date);
 }
 
-export default function JobCardMeta({ job, showLocation = true }: Props) {
+export default function JobCardMeta({
+  job,
+  showLocation = true,
+  compact = false,
+}: Props) {
   const { theme } = useTheme();
 
-  const createdDate = useMemo(
-    () => parseSafeDate(job.created_at),
-    [job.created_at],
-  );
   const expiresDate = useMemo(
     () => parseSafeDate(job.expires_at),
     [job.expires_at],
   );
 
-  const isToday = useMemo(() => {
-    if (!createdDate) return false;
-
-    const now = new Date();
-    return createdDate.toDateString() === now.toDateString();
-  }, [createdDate]);
-
   const locationLabel = useMemo(() => {
     if (!showLocation) return null;
-    if (!job.sub_county || !job.district) return null;
 
-    return `${job.sub_county}, ${job.district}`;
-  }, [job.sub_county, job.district, showLocation]);
+    if (
+      typeof job.posting_display_label === "string" &&
+      job.posting_display_label.trim().length > 0
+    ) {
+      return job.posting_display_label.trim();
+    }
+
+    return null;
+  }, [job.posting_display_label, showLocation]);
+
+  const payLabel = useMemo(() => formatPayType(job.pay_type), [job.pay_type]);
 
   const formattedExpiry = useMemo(
     () => formatShortDate(expiresDate),
     [expiresDate],
   );
-  const payLabel = useMemo(() => formatPayType(job.pay_type), [job.pay_type]);
+
+  const isDistrictFallback = job.posting_resolution_level === "district_only";
+
+  const metaLine = useMemo(() => {
+    const parts: string[] = [];
+
+    if (locationLabel) parts.push(locationLabel);
+    if (payLabel) parts.push(payLabel);
+    if (formattedExpiry) parts.push(`Expires ${formattedExpiry}`);
+
+    return parts.join(" • ");
+  }, [locationLabel, payLabel, formattedExpiry]);
 
   const containerStyle = useMemo<ViewStyle>(
     () => ({
-      gap: theme.spacing.sm,
+      gap: compact ? theme.spacing.xs : theme.spacing.sm,
     }),
-    [theme.spacing.sm],
+    [compact, theme.spacing.sm, theme.spacing.xs],
   );
 
-  const topMetaRowStyle = useMemo<ViewStyle>(
+  const topRowStyle = useMemo<ViewStyle>(
     () => ({
       flexDirection: "row",
       alignItems: "center",
@@ -85,31 +97,22 @@ export default function JobCardMeta({ job, showLocation = true }: Props) {
     [theme.spacing.sm],
   );
 
-  const locationWrapStyle = useMemo<ViewStyle>(
-    () => ({
-      flex: 1,
-      minWidth: 0,
-      flexDirection: "row",
-      alignItems: "center",
-      gap: theme.spacing.xs,
-    }),
-    [theme.spacing.xs],
-  );
-
-  const payRowStyle = useMemo<ViewStyle>(
+  const badgeRowStyle = useMemo<ViewStyle>(
     () => ({
       flexDirection: "row",
       alignItems: "center",
       flexWrap: "wrap",
       gap: theme.spacing.xs,
+      justifyContent: "flex-end",
     }),
     [theme.spacing.xs],
   );
 
-  const expiryRowStyle = useMemo<ViewStyle>(
+  const metaRowStyle = useMemo<ViewStyle>(
     () => ({
       flexDirection: "row",
-      alignItems: "center",
+      alignItems: "flex-start",
+      minWidth: 0,
       gap: theme.spacing.xs,
     }),
     [theme.spacing.xs],
@@ -117,46 +120,31 @@ export default function JobCardMeta({ job, showLocation = true }: Props) {
 
   return (
     <View style={containerStyle}>
-      <View style={topMetaRowStyle}>
-        {locationLabel ? (
-          <View style={locationWrapStyle}>
-            <Ionicons
-              name="location-outline"
-              size={15}
-              color={theme.colors.textTertiary}
-            />
-            <AppText
-              variant="bodySm"
-              tone="secondary"
-              weight="600"
-              numberOfLines={1}
-            >
-              {locationLabel}
-            </AppText>
+      <View style={topRowStyle}>
+        <View style={{ flex: 1, minWidth: 0 }} />
+
+        {isDistrictFallback ? (
+          <View style={badgeRowStyle}>
+            <StatusBadge label="District" tone="warning" />
           </View>
-        ) : (
-          <View style={{ flex: 1, minWidth: 0 }} />
-        )}
-
-        {isToday ? <StatusBadge label="Today" tone="warning" /> : null}
+        ) : null}
       </View>
 
-      <View style={payRowStyle}>
-        <AppText variant="caption" tone="tertiary" uppercase>
-          Pay Type
-        </AppText>
-        <AppText variant="bodySm" tone="primary" weight="700">
-          {payLabel}
-        </AppText>
-      </View>
-
-      {formattedExpiry ? (
-        <View style={expiryRowStyle}>
-          <AppText variant="caption" tone="tertiary">
-            Expires
-          </AppText>
-          <AppText variant="caption" tone="secondary" weight="600">
-            {formattedExpiry}
+      {metaLine ? (
+        <View style={metaRowStyle}>
+          <Ionicons
+            name="location-outline"
+            size={15}
+            color={theme.colors.textTertiary}
+            style={{ marginTop: 2 }}
+          />
+          <AppText
+            variant={compact ? "bodySm" : "body"}
+            tone="secondary"
+            weight="600"
+            style={{ flex: 1, lineHeight: compact ? 20 : 22 }}
+          >
+            {metaLine}
           </AppText>
         </View>
       ) : null}

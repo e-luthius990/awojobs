@@ -11,33 +11,14 @@ type TrustBadge = {
   tone: StatusBadgeTone;
 };
 
-function getCreatedAtTimestamp(
-  value: string | null | undefined,
-): number | null {
-  if (!value) return null;
-
-  const timestamp = new Date(value).getTime();
-  return Number.isNaN(timestamp) ? null : timestamp;
-}
-
 function getTrustBadges(job: JobWithCoords): TrustBadge[] {
   const badges: TrustBadge[] = [];
-  const createdAt = getCreatedAtTimestamp(job.created_at);
-  const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
 
   if (job.employer_verified === true) {
     badges.push({
       key: "verified",
       label: "Verified employer",
       tone: "verified",
-    });
-  }
-
-  if (createdAt !== null && createdAt >= sevenDaysAgo) {
-    badges.push({
-      key: "new",
-      label: "New post",
-      tone: "info",
     });
   }
 
@@ -49,7 +30,7 @@ export default function JobCardTrustBadges({ job }: { job: JobWithCoords }) {
 
   const trustBadges = useMemo(
     () => getTrustBadges(job),
-    [job.created_at, job.employer_verified],
+    [job.employer_verified],
   );
 
   const containerStyle = useMemo<ViewStyle>(

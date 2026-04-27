@@ -55,7 +55,7 @@ export function StatusBadge({
       case "info":
         return {
           backgroundColor: theme.colors.infoSoft,
-          borderColor: theme.colors.sponsoredBorder,
+          borderColor: theme.colors.borderMuted ?? theme.colors.borderDefault,
           textTone: "info" as const,
         };
 
@@ -84,13 +84,14 @@ export function StatusBadge({
       default:
         return {
           backgroundColor: theme.colors.bgSurfaceMuted,
-          borderColor: theme.colors.borderDefault,
+          borderColor: theme.colors.borderMuted ?? theme.colors.borderDefault,
           textTone: "secondary" as const,
         };
     }
   }, [
     theme.colors.bgSurfaceMuted,
     theme.colors.borderDefault,
+    theme.colors.borderMuted,
     theme.colors.error,
     theme.colors.errorSoft,
     theme.colors.infoSoft,
@@ -109,9 +110,9 @@ export function StatusBadge({
   const containerStyle = useMemo<ViewStyle>(
     () => ({
       alignSelf: "flex-start",
-      minHeight: 28,
-      paddingHorizontal: 10,
-      paddingVertical: 5,
+      minHeight: 24,
+      paddingHorizontal: 8,
+      paddingVertical: 3,
       borderRadius: theme.radius.pill,
       backgroundColor: palette.backgroundColor,
       borderWidth: 1,
@@ -127,7 +128,7 @@ export function StatusBadge({
       <AppText
         variant="caption"
         tone={palette.textTone}
-        weight="700"
+        weight="600"
         numberOfLines={1}
       >
         {label}

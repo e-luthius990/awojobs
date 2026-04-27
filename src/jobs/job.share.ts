@@ -18,7 +18,11 @@ function sanitize(text?: string | null, max = 280) {
   return text.trim().replace(/\s+/g, " ").slice(0, max);
 }
 
-function formatPayType(type: string) {
+function formatPayType(type?: string | null) {
+  if (!type || type === "not_specified") {
+    return "Not specified";
+  }
+
   return type.charAt(0).toUpperCase() + type.slice(1);
 }
 
@@ -51,6 +55,9 @@ export function buildJobShareText(job: Job) {
   }
 
   const description = sanitize(job.description, 300);
+  const locationLine = job.posting_display_label
+    ? `Location: ${job.posting_display_label}\n`
+    : "";
 
   const details = description
     ? `\n\nDetails:\n${description}`
@@ -61,6 +68,7 @@ export function buildJobShareText(job: Job) {
   return (
     `Job Opportunity — AwoJobs\n\n` +
     `${sanitize(job.title, 120)}\n` +
+    `${locationLine}` +
     `Pay: ${formatPayType(job.pay_type)}\n` +
     `${contactLine}\n` +
     `Expires: ${expires}` +
@@ -76,7 +84,6 @@ export function buildJobShareText(job: Job) {
 export async function shareJob(job: Job) {
   const message = buildJobShareText(job);
 
-  /* ---------- Native Share ---------- */
   try {
     const result = await Share.share({
       message,
@@ -90,7 +97,6 @@ export async function shareJob(job: Job) {
     // fall through to WhatsApp
   }
 
-  /* ---------- WhatsApp Fallback ---------- */
   try {
     const encoded = encodeURIComponent(message);
     await Linking.openURL(`https://wa.me/?text=${encoded}`);

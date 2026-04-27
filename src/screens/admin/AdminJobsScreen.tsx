@@ -9,7 +9,6 @@ import {
   View,
   FlatList,
   Pressable,
-  ActivityIndicator,
   RefreshControl,
   TextInput,
   ScrollView,
@@ -33,15 +32,25 @@ type JobStatus =
   | "pending_payment"
   | "active"
   | "expired"
-  | "deleted"
-  | string;
+  | "closed"
+  | "flagged"
+  | "deleted";
 
 type Job = {
   id: string;
   title: string;
   status: JobStatus;
   created_at: string;
+  expires_at: string | null;
   employer_id: string;
+  district_id: string | null;
+  posting_resolution_level:
+    | "exact_local"
+    | "district_only"
+    | "uganda_only"
+    | "outside_uganda"
+    | null;
+  posting_display_label: string | null;
   profiles?: {
     business_name: string | null;
     full_name: string | null;
@@ -65,12 +74,31 @@ function mapStatusTone(
   if (status === "pending_payment") return "warning";
   if (status === "draft") return "default";
   if (status === "expired" || status === "deleted") return "error";
+  if (status === "flagged") return "warning";
   return "default";
 }
 
 function formatStatus(status: JobStatus) {
   if (status === "pending_payment") return "Pending";
   return status.charAt(0).toUpperCase() + status.slice(1).replace(/_/g, " ");
+}
+
+function canAdminActivate(job: Job) {
+  if (job.status === "deleted" || job.status === "active") return false;
+
+  if (job.status === "draft") {
+    return (
+      !!job.district_id &&
+      (job.posting_resolution_level === "exact_local" ||
+        job.posting_resolution_level === "district_only")
+    );
+  }
+
+  if (job.status === "expired") {
+    return true;
+  }
+
+  return false;
 }
 
 export default function AdminJobsScreen() {
@@ -103,7 +131,11 @@ export default function AdminJobsScreen() {
             title,
             status,
             created_at,
+            expires_at,
             employer_id,
+            district_id,
+            posting_resolution_level,
+            posting_display_label,
             profiles (
               business_name,
               full_name
@@ -227,22 +259,6 @@ export default function AdminJobsScreen() {
       padding: theme.spacing.lg,
     }),
     [theme.colors.bgApp, theme.spacing.lg],
-  );
-
-  const centerStyle = useMemo<ViewStyle>(
-    () => ({
-      flex: 1,
-      justifyContent: "center",
-      alignItems: "center",
-    }),
-    [],
-  );
-
-  const loadingTextStyle = useMemo<ViewStyle>(
-    () => ({
-      marginTop: 8,
-    }),
-    [],
   );
 
   const searchWrapStyle = useMemo<ViewStyle>(
@@ -438,6 +454,7 @@ export default function AdminJobsScreen() {
             showsVerticalScrollIndicator={false}
             renderItem={({ item }) => {
               const busy = updatingId === item.id;
+              const canActivate = canAdminActivate(item);
 
               return (
                 <View style={cardStyle}>
@@ -458,18 +475,43 @@ export default function AdminJobsScreen() {
                         <AppText variant="caption" tone="tertiary">
                           {new Date(item.created_at).toLocaleDateString()}
                         </AppText>
+
+                        {item.posting_display_label ? (
+                          <AppText variant="caption" tone="secondary">
+                            Location: {item.posting_display_label}
+                          </AppText>
+                        ) : null}
                       </View>
 
-                      <View>
+                      <View
+                        style={{
+                          flexDirection: "row",
+                          gap: 8,
+                          flexWrap: "wrap",
+                        }}
+                      >
                         <StatusBadge
                           label={formatStatus(item.status)}
                           tone={mapStatusTone(item.status)}
                         />
+                        {item.posting_resolution_level === "district_only" ? (
+                          <StatusBadge
+                            label="District fallback"
+                            tone="warning"
+                          />
+                        ) : null}
                       </View>
 
+                      {item.status === "draft" && !canActivate ? (
+                        <InlineAlert
+                          tone="warning"
+                          title="Draft not activation-ready"
+                          message="This draft is missing a usable posting location or district."
+                        />
+                      ) : null}
+
                       <View style={actionRowStyle}>
-                        {item.status !== "active" &&
-                        item.status !== "deleted" ? (
+                        {canActivate ? (
                           <AppButton
                             title="Activate"
                             size="sm"

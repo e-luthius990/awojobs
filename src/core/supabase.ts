@@ -1,25 +1,30 @@
-// src/core/supabase.ts
-
 import "react-native-url-polyfill/auto";
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { ENV } from "./config";
 import { secureAuthStorage } from "./secureAuthStorage";
-
-/* =====================================================
-   SINGLETON PROTECTION (FAST REFRESH SAFE)
-===================================================== */
 
 declare global {
   // eslint-disable-next-line no-var
   var __SUPABASE_CLIENT__: SupabaseClient | undefined;
 }
 
-/* =====================================================
-   CLIENT FACTORY
-===================================================== */
+function assertEnv(name: string, value: string | undefined): string {
+  if (!value || typeof value !== "string" || value.trim().length === 0) {
+    throw new Error(`[supabase] Missing required env: ${name}`);
+  }
+
+  return value.trim();
+}
 
 function createSupabaseClient(): SupabaseClient {
-  return createClient(ENV.SUPABASE_URL, ENV.SUPABASE_ANON_KEY, {
+  const supabaseUrl = assertEnv("SUPABASE_URL", ENV.SUPABASE_URL);
+  const supabaseAnonKey = assertEnv("SUPABASE_ANON_KEY", ENV.SUPABASE_ANON_KEY);
+
+  if (!/^https:\/\/.+/i.test(supabaseUrl)) {
+    throw new Error("[supabase] SUPABASE_URL must be a valid https URL");
+  }
+
+  return createClient(supabaseUrl, supabaseAnonKey, {
     global: {
       headers: {
         "X-Client-Info": "awojobs-mobile",
@@ -43,10 +48,6 @@ function createSupabaseClient(): SupabaseClient {
     },
   });
 }
-
-/* =====================================================
-   ENSURE SINGLE INSTANCE
-===================================================== */
 
 export const supabase: SupabaseClient =
   global.__SUPABASE_CLIENT__ ?? createSupabaseClient();

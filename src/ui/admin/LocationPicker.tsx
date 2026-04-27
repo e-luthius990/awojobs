@@ -26,7 +26,16 @@ type Props = {
   minSearchLength?: number;
   showInitialItems?: boolean;
   maxVisibleItems?: number;
+  disabled?: boolean;
 };
+
+function normalizeSearchValue(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .replace(/\s+/g, " ");
+}
 
 export default function LocationPicker({
   label,
@@ -37,6 +46,7 @@ export default function LocationPicker({
   minSearchLength = 1,
   showInitialItems = false,
   maxVisibleItems = 8,
+  disabled = false,
 }: Props) {
   const { theme } = useTheme();
 
@@ -49,7 +59,7 @@ export default function LocationPicker({
   }, [search]);
 
   const normalizedQuery = useMemo(
-    () => debounced.trim().toLowerCase(),
+    () => normalizeSearchValue(debounced),
     [debounced],
   );
 
@@ -63,7 +73,7 @@ export default function LocationPicker({
     }
 
     return locations
-      .filter((loc) => loc.name.toLowerCase().includes(normalizedQuery))
+      .filter((loc) => normalizeSearchValue(loc.name).includes(normalizedQuery))
       .slice(0, 100);
   }, [
     locations,
@@ -95,11 +105,20 @@ export default function LocationPicker({
           paddingVertical: theme.spacing.sm,
           gap: 4,
         },
+        selectedTopRow: {
+          flexDirection: "row",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: theme.spacing.sm,
+        },
         selectedLabel: {
           color: theme.colors.primary,
         },
         selectedValue: {
           color: theme.colors.textPrimary,
+        },
+        clearButton: {
+          padding: 4,
         },
         searchWrap: {
           minHeight: 48,
@@ -111,6 +130,7 @@ export default function LocationPicker({
           flexDirection: "row",
           alignItems: "center",
           gap: theme.spacing.sm,
+          opacity: disabled ? 0.6 : 1,
         },
         search: {
           flex: 1,
@@ -167,7 +187,7 @@ export default function LocationPicker({
           color: theme.colors.textSecondary,
         },
       }),
-    [theme],
+    [theme, disabled],
   );
 
   const renderItem: ListRenderItem<PickerLocation> = useCallback(
@@ -181,6 +201,7 @@ export default function LocationPicker({
             active && styles.optionActive,
             pressed ? { opacity: 0.9 } : null,
           ]}
+          disabled={disabled}
           onPress={() => {
             onSelect(item.id);
             setSearch("");
@@ -207,7 +228,7 @@ export default function LocationPicker({
         </Pressable>
       );
     },
-    [onSelect, selectedId, styles, theme.colors.textInverse],
+    [disabled, onSelect, selectedId, styles, theme.colors.textInverse],
   );
 
   const keyExtractor = useCallback((item: PickerLocation) => item.id, []);
@@ -225,9 +246,30 @@ export default function LocationPicker({
 
       {selectedLocation ? (
         <View style={styles.selectedBox}>
-          <AppText variant="caption" weight="700" style={styles.selectedLabel}>
-            Selected location
-          </AppText>
+          <View style={styles.selectedTopRow}>
+            <AppText
+              variant="caption"
+              weight="700"
+              style={styles.selectedLabel}
+            >
+              Selected location
+            </AppText>
+
+            <Pressable
+              onPress={() => onSelect("")}
+              disabled={disabled}
+              style={styles.clearButton}
+              accessibilityRole="button"
+              accessibilityLabel="Clear selected location"
+            >
+              <Ionicons
+                name="close-circle-outline"
+                size={18}
+                color={theme.colors.primary}
+              />
+            </Pressable>
+          </View>
+
           <AppText variant="bodySm" weight="600" style={styles.selectedValue}>
             {selectedLocation.name}
           </AppText>
@@ -248,6 +290,7 @@ export default function LocationPicker({
           style={styles.search}
           autoCapitalize="none"
           autoCorrect={false}
+          editable={!disabled}
         />
       </View>
 

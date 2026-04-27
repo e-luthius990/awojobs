@@ -49,31 +49,31 @@ export const createShadows = (
     level1: createDepth(
       shadowColor,
       {
-        shadowOpacity: 0.06,
-        shadowRadius: 8,
-        shadowOffset: { width: 0, height: 3 },
+        shadowOpacity: 0.08,
+        shadowRadius: 10,
+        shadowOffset: { width: 0, height: 4 },
       },
-      2,
+      3,
     ),
 
     level2: createDepth(
       shadowColor,
       {
-        shadowOpacity: 0.09,
-        shadowRadius: 14,
-        shadowOffset: { width: 0, height: 6 },
+        shadowOpacity: 0.11,
+        shadowRadius: 16,
+        shadowOffset: { width: 0, height: 7 },
       },
-      4,
+      5,
     ),
 
     level3: createDepth(
       shadowColor,
       {
-        shadowOpacity: 0.12,
-        shadowRadius: 20,
-        shadowOffset: { width: 0, height: 10 },
+        shadowOpacity: 0.14,
+        shadowRadius: 22,
+        shadowOffset: { width: 0, height: 11 },
       },
-      7,
+      8,
     ),
 
     focusRing: {

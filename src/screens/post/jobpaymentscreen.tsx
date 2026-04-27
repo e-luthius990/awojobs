@@ -8,13 +8,9 @@ import React, {
 import { View } from "react-native";
 
 import { supabase } from "../../core/supabase";
+import { resolveLocation } from "../../location/location.service";
 import { updateJob } from "../../jobs/jobs.update";
 import { PostingSuccessPrompt } from "../../ui/components/PostingSuccessPrompt";
-import {
-  createJobWithDetectedLocation,
-  publishJob,
-  type JobRecord,
-} from "../../jobs/postJob.service";
 
 import { useTheme } from "../../theme/useTheme";
 import { AppScreen } from "../../ui/AppScreen";
@@ -41,22 +37,6 @@ type EditingJob = {
   town?: string | null;
   sub_county?: string | null;
   location_name?: string | null;
-  posting_display_label?: string | null;
-  posting_resolution_level?:
-    | "exact_local"
-    | "area_local"
-    | "district_only"
-    | null;
-  approximate_area_radius_meters?: number | null;
-  status?:
-    | "draft"
-    | "pending_payment"
-    | "active"
-    | "expired"
-    | "closed"
-    | "flagged"
-    | "deleted"
-    | null;
 };
 
 type Props = {
@@ -69,8 +49,6 @@ type Props = {
     };
   };
 };
-
-const BYPASS_JOB_POST_PAYMENT = true;
 
 function formatLocationName(loc: {
   district?: string | null;
@@ -113,88 +91,6 @@ function isValidUgPhone(input: string) {
   return /^\+256\d{9}$/.test(normalizePhone(input));
 }
 
-function getCreateJobErrorMessage(code: string, fallback: string) {
-  switch (code) {
-    case "OUTSIDE_SUPPORTED_COUNTRY":
-      return "Job posting is only available when your device is detected inside Uganda.";
-    case "POSTING_LOCATION_NOT_PRECISE_ENOUGH":
-      return "We could not confirm your posting area precisely enough yet. Try again where GPS or network signal is stronger.";
-    case "LOCATION_PERMISSION_DENIED":
-      return "Location permission is off. Turn it on to post a job.";
-    case "LOCATION_SERVICES_DISABLED":
-      return "Device location services are off. Turn them on to post a job.";
-    case "LOCATION_UNAVAILABLE":
-      return "We could not get your device location right now. Try again in a moment.";
-    case "AUTH_REQUIRED":
-      return "Please sign in again.";
-    case "FORBIDDEN":
-      return "Only employers can post jobs.";
-    case "PROFILE_NOT_FOUND":
-      return "Your profile could not be loaded.";
-    case "ACCOUNT_SUSPENDED":
-      return "Your account is suspended.";
-    case "VALIDATION_ERROR":
-      return fallback || "Some job fields are invalid.";
-    default:
-      return fallback || "Could not create job right now.";
-  }
-}
-
-function getPublishJobErrorMessage(code: string, fallback: string) {
-  switch (code) {
-    case "JOB_NOT_IN_DRAFT":
-      return "Only draft jobs can be published.";
-    case "NOT_FOUND":
-      return "That draft could not be found.";
-    case "POSTING_LOCATION_NOT_PRECISE_ENOUGH":
-      return "This draft does not have a precise enough posting location yet.";
-    case "VALIDATION_ERROR":
-      return fallback || "This draft is missing some required details.";
-    case "AUTH_REQUIRED":
-      return "Please sign in again.";
-    case "FORBIDDEN":
-      return "Only employers can publish jobs.";
-    default:
-      return fallback || "Could not publish this job right now.";
-  }
-}
-
-function buildDefaultExpiryIso() {
-  const date = new Date();
-  date.setDate(date.getDate() + 30);
-  return date.toISOString();
-}
-
-function getPostingLocationSummary(job: EditingJob | undefined): string | null {
-  if (!job) return null;
-
-  const label =
-    job.posting_display_label ??
-    formatLocationName({
-      district: job.district ?? null,
-      town: job.town ?? null,
-      sub_county: job.sub_county ?? null,
-    }) ??
-    job.location_name ??
-    null;
-
-  if (!label) return null;
-
-  if (job.posting_resolution_level === "exact_local") {
-    return `This job will be posted from ${label}.`;
-  }
-
-  if (job.posting_resolution_level === "area_local") {
-    return `This job will be posted around ${label}.`;
-  }
-
-  if (job.posting_resolution_level === "district_only") {
-    return `This job will be posted from ${label} district coverage.`;
-  }
-
-  return `This job will be posted from ${label}.`;
-}
-
 export default function PostJobScreen({ navigation, route }: Props) {
   const { theme } = useTheme();
   const { job: editingJob, jobId, mode = "create" } = route?.params ?? {};
@@ -203,6 +99,7 @@ export default function PostJobScreen({ navigation, route }: Props) {
   const isRenew = mode === "renew";
   const isCreate = !isEdit && !isRenew;
 
+  const [locationId, setLocationId] = useState<string | null>(null);
   const [locationName, setLocationName] = useState<string | null>(null);
 
   const [title, setTitle] = useState(editingJob?.title ?? "");
@@ -214,27 +111,63 @@ export default function PostJobScreen({ navigation, route }: Props) {
     editingJob?.contact_method ?? "call",
   );
   const [phone, setPhone] = useState(editingJob?.contact_phone ?? "");
-  const [expiresAt, setExpiresAt] = useState(buildDefaultExpiryIso());
 
   const [loading, setLoading] = useState(false);
-  const [postedJob, setPostedJob] = useState<JobRecord | null>(null);
+  const [postedJob, setPostedJob] = useState<any | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const fieldDisabled = isRenew;
 
   useEffect(() => {
-    if (!editingJob) return;
+    let active = true;
 
-    setLocationName(
-      editingJob.posting_display_label ??
-        formatLocationName({
-          district: editingJob.district ?? null,
-          town: editingJob.town ?? null,
-          sub_county: editingJob.sub_county ?? null,
-        }) ??
-        editingJob.location_name ??
-        null,
-    );
+    const loadLocation = async () => {
+      if (editingJob) {
+        if (!active) return;
+
+        setLocationId(editingJob.location_id ?? null);
+        setLocationName(
+          formatLocationName({
+            district: editingJob.district ?? null,
+            town: editingJob.town ?? null,
+            sub_county: editingJob.sub_county ?? null,
+          }) ||
+            editingJob.location_name ||
+            null,
+        );
+        return;
+      }
+
+      try {
+        const loc = await resolveLocation();
+        if (!active) return;
+
+        if (!loc?.location_id) {
+          setLocationId(null);
+          setLocationName(null);
+          return;
+        }
+
+        setLocationId(loc.location_id);
+        setLocationName(
+          formatLocationName({
+            district: loc.district ?? null,
+            town: loc.town ?? null,
+            sub_county: loc.sub_county ?? null,
+          }) || null,
+        );
+      } catch {
+        if (!active) return;
+        setLocationId(null);
+        setLocationName(null);
+      }
+    };
+
+    void loadLocation();
+
+    return () => {
+      active = false;
+    };
   }, [editingJob]);
 
   useEffect(() => {
@@ -275,11 +208,6 @@ export default function PostJobScreen({ navigation, route }: Props) {
     return null;
   }, [contactMethod, phone]);
 
-  const postingLocationSummary = useMemo(
-    () => getPostingLocationSummary(editingJob),
-    [editingJob],
-  );
-
   const contentStyle = useMemo<ViewStyle>(
     () => ({
       gap: theme.spacing.md,
@@ -311,6 +239,11 @@ export default function PostJobScreen({ navigation, route }: Props) {
   );
 
   const validateBeforeSubmit = useCallback(() => {
+    if (!locationId) {
+      setError("Turn on location to continue posting this job.");
+      return false;
+    }
+
     if (!isRenew && title.trim().length < 4) {
       setError("Job title must be at least 4 characters.");
       return false;
@@ -336,14 +269,9 @@ export default function PostJobScreen({ navigation, route }: Props) {
       return false;
     }
 
-    if (!isEdit && !isRenew && !expiresAt.trim()) {
-      setError("Expiry date is required.");
-      return false;
-    }
-
     setError(null);
     return true;
-  }, [contactMethod, isRenew, phone, title, expiresAt, isEdit]);
+  }, [contactMethod, isRenew, locationId, phone, title]);
 
   const submitEdit = useCallback(async () => {
     if (!jobId) {
@@ -368,7 +296,7 @@ export default function PostJobScreen({ navigation, route }: Props) {
             : normalizePhone(phone),
       });
 
-      setPostedJob(saved as JobRecord);
+      setPostedJob(saved);
     } catch (e: any) {
       setError(e?.message ?? "Could not save changes.");
     } finally {
@@ -394,25 +322,13 @@ export default function PostJobScreen({ navigation, route }: Props) {
     setError(null);
 
     try {
-      if (BYPASS_JOB_POST_PAYMENT) {
-        const result = await publishJob(jobId);
-
-        if (!result.ok) {
-          setError(getPublishJobErrorMessage(result.code, result.message));
-          return;
-        }
-
-        setPostedJob(result.job);
-        return;
-      }
-
       navigation.navigate("Payment", {
         draftId: jobId,
         mode: "renew",
         jobId,
       });
     } catch (e: any) {
-      setError(e?.message ?? "Could not renew job.");
+      setError(e?.message ?? "Could not start renewal.");
     } finally {
       setLoading(false);
     }
@@ -425,58 +341,48 @@ export default function PostJobScreen({ navigation, route }: Props) {
     setError(null);
 
     try {
-      const createResult = await createJobWithDetectedLocation({
+      const draftPayload = {
         title: title.trim(),
         description: description.trim() || "",
-        payType,
-        contactMethod,
-        contactPhone:
+        pay_type: payType,
+        contact_method: contactMethod,
+        contact_phone:
           contactMethod === "walk_in" || contactMethod === "in_app"
             ? null
             : normalizePhone(phone),
-        expiresAt,
+        location_id: locationId,
+        status: "draft" as const,
+      };
+
+      const { data, error: insertError } = await supabase
+        .from("jobs")
+        .insert(draftPayload)
+        .select()
+        .single();
+
+      if (insertError || !data) {
+        throw insertError ?? new Error("Could not create draft.");
+      }
+
+      navigation.navigate("Payment", {
+        draftId: data.id,
+        mode: "create",
+        jobId: data.id,
       });
-
-      if (!createResult.ok) {
-        setError(
-          getCreateJobErrorMessage(createResult.code, createResult.message),
-        );
-        return;
-      }
-
-      if (!BYPASS_JOB_POST_PAYMENT) {
-        navigation.navigate("Payment", {
-          draftId: createResult.job.id,
-          mode: "create",
-          jobId: createResult.job.id,
-        });
-        return;
-      }
-
-      const publishResult = await publishJob(createResult.job.id);
-
-      if (!publishResult.ok) {
-        setError(
-          getPublishJobErrorMessage(publishResult.code, publishResult.message),
-        );
-        return;
-      }
-
-      setPostedJob(publishResult.job);
     } catch (e: any) {
-      setError(e?.message ?? "Could not create job.");
+      setError(e?.message ?? "Could not create draft.");
     } finally {
       setLoading(false);
     }
   }, [
     contactMethod,
     description,
+    locationId,
     navigation,
     payType,
     phone,
     title,
     validateBeforeSubmit,
-    expiresAt,
   ]);
 
   const continueFlow = useCallback(async () => {
@@ -513,10 +419,8 @@ export default function PostJobScreen({ navigation, route }: Props) {
             isEdit
               ? "Update your job details and save changes."
               : isRenew
-                ? "Review the job and reactivate the listing."
-                : BYPASS_JOB_POST_PAYMENT
-                  ? "Create a location-validated draft, then publish it immediately for testing."
-                  : "Create a location-validated draft first, then complete payment before it goes live."
+                ? "Review the job and continue to payment."
+                : "Create a draft first, then complete payment before it goes live."
           }
         />
 
@@ -524,10 +428,15 @@ export default function PostJobScreen({ navigation, route }: Props) {
           <InlineAlert
             tone="info"
             title="Posting location"
-            message={
-              postingLocationSummary ??
-              `This job is prepared for ${locationName}.`
-            }
+            message={`This job will be posted in ${locationName}.`}
+          />
+        ) : null}
+
+        {!locationId && isCreate ? (
+          <InlineAlert
+            tone="warning"
+            title="Location required"
+            message="Turn on location to continue posting this job."
           />
         ) : null}
 
@@ -535,11 +444,7 @@ export default function PostJobScreen({ navigation, route }: Props) {
           <InlineAlert
             tone="warning"
             title="Renewal mode"
-            message={
-              BYPASS_JOB_POST_PAYMENT
-                ? "Job details are locked during renewal. Continue to publish the draft again for testing."
-                : "Job details are locked during renewal. Continue to payment to reactivate the listing."
-            }
+            message="Job details are locked during renewal. Continue to payment to reactivate the listing."
           />
         ) : null}
 
@@ -547,11 +452,7 @@ export default function PostJobScreen({ navigation, route }: Props) {
           <InlineAlert
             tone="info"
             title="Before your job goes live"
-            message={
-              BYPASS_JOB_POST_PAYMENT
-                ? "AwoJobs will first confirm your current posting location, save the draft with that location, then publish it immediately for testing."
-                : "AwoJobs will first confirm your current posting location before creating the draft."
-            }
+            message="AwoJobs saves this as a draft first. You will complete payment before publishing."
           />
         ) : null}
 
@@ -586,20 +487,6 @@ export default function PostJobScreen({ navigation, route }: Props) {
               multiline
               hint="Keep it clear and practical. Mention what the worker will actually do."
             />
-
-            {isCreate ? (
-              <AppInput
-                label="Expires at (ISO)"
-                value={expiresAt}
-                onChangeText={(value) => {
-                  setExpiresAt(value);
-                  if (error) setError(null);
-                }}
-                editable={!fieldDisabled}
-                placeholder="2026-05-15T12:00:00.000Z"
-                hint="Use an ISO timestamp until you wire in a date picker."
-              />
-            ) : null}
           </View>
         </AppCard>
 
@@ -675,20 +562,10 @@ export default function PostJobScreen({ navigation, route }: Props) {
         </AppCard>
 
         <AppButton
-          title={
-            isEdit
-              ? "Save Changes"
-              : isRenew
-                ? BYPASS_JOB_POST_PAYMENT
-                  ? "Publish Job"
-                  : "Continue to Payment"
-                : BYPASS_JOB_POST_PAYMENT
-                  ? "Publish Job"
-                  : "Continue"
-          }
+          title={isEdit ? "Save Changes" : "Continue to Payment"}
           onPress={continueFlow}
           loading={loading}
-          disabled={loading}
+          disabled={loading || (isCreate && !locationId)}
           variant="primary"
         />
 
